@@ -1,210 +1,107 @@
-import asyncio
 import os
-import random
-from datetime import datetime, timedelta
-
-import pytz
+import time
+import logging
 import yfinance as yf
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
 from telegram import Bot
+from telegram.ext import Updater, CommandHandler
 
-# =========================
-# TELEGRAM
-# =========================
+# -------------------------
+# LOGGING
+# -------------------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
+logger = logging.getLogger(__name__)
+
+# -------------------------
+# ENV VARIABLES (RENDER SAFE)
+# -------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+if not BOT_TOKEN:
+    raise Exception("BOT_TOKEN is missing. Set it in Render Environment Variables.")
+
+# -------------------------
+# INIT BOT
+# -------------------------
 bot = Bot(token=BOT_TOKEN)
 
-# =========================
-# INDIA TIMEZONE
-# =========================
+# -------------------------
+# SIMPLE CACHE (for rate limit control)
+# -------------------------
+cache = {}
+CACHE_TIME = 30  # seconds
 
-india = pytz.timezone("Asia/Kolkata")
+def get_price(symbol="EURUSD=X"):
+    """Fetch price with caching to avoid Yahoo rate limit"""
+    current_time = time.time()
 
-# =========================
-# FOREX PAIRS
-# =========================
-
-LIVE_PAIRS = {
-    "EURUSD": "EURUSD=X",
-    "GBPUSD": "GBPUSD=X",
-    "EURGBP": "EURGBP=X",
-    "EURJPY": "EURJPY=X",
-    "AUDUSD": "AUDUSD=X",
-    "USDJPY": "JPY=X",
-    "USDCAD": "CAD=X",
-    "GBPJPY": "GBPJPY=X",
-    "NZDUSD": "NZDUSD=X"
-}
-
-# =========================
-# GET SIGNAL
-# =========================
-
-def get_signal(pair_name, symbol):
+    # return cached if still valid
+    if symbol in cache:
+        data, timestamp = cache[symbol]
+        if current_time - timestamp < CACHE_TIME:
+            return data
 
     try:
+        ticker = yf.Ticker(symbol)
+        data = ticker.history(period="1m")
 
-        df = yf.download(
-            symbol,
-            period="1d",
-            interval="1m",
-            progress=False,
-            auto_adjust=True
-        )
+        if data.empty:
+            return "No data"
 
-        if df.empty:
-            return None
+        price = float(data["Close"].iloc[-1])
 
-        close = df["Close"].squeeze()
+        cache[symbol] = (price, current_time)
+        time.sleep(1)  # small delay to reduce rate limit
 
-        ema9 = EMAIndicator(close, window=9).ema_indicator()
-        ema21 = EMAIndicator(close, window=21).ema_indicator()
-
-        rsi = RSIIndicator(close, window=14).rsi()
-
-        macd = MACD(close)
-
-        macd_line = macd.macd()
-        macd_signal = macd.macd_signal()
-
-        last_ema9 = ema9.iloc[-1]
-        last_ema21 = ema21.iloc[-1]
-
-        last_rsi = rsi.iloc[-1]
-
-        last_macd = macd_line.iloc[-1]
-        last_macd_signal = macd_signal.iloc[-1]
-
-        # BUY SIGNAL
-        if (
-            last_ema9 > last_ema21
-            and last_rsi > 55
-            and last_macd > last_macd_signal
-        ):
-
-            return {
-                "pair": pair_name,
-                "direction": "UP ⬆️"
-            }
-
-        # SELL SIGNAL
-        elif (
-            last_ema9 < last_ema21
-            and last_rsi < 45
-            and last_macd < last_macd_signal
-        ):
-
-            return {
-                "pair": pair_name,
-                "direction": "DOWN ⬇️"
-            }
-
-        return None
+        return price
 
     except Exception as e:
-        print(f"ERROR {pair_name}: {e}")
-        return None
+        logger.error(f"Error fetching price: {e}")
+        return "Error fetching data"
 
-# =========================
-# SEND TELEGRAM SIGNAL
-# =========================
+# -------------------------
+# TELEGRAM COMMANDS
+# -------------------------
+def start(update, context):
+    update.message.reply_text("Bot started successfully 🚀")
 
-async def send_signal(signal):
+def price(update, context):
+    symbol = "EURUSD=X"
 
-    now = datetime.now(india)
+    if context.args:
+        symbol = context.args[0]
 
-    entry = now + timedelta(minutes=2)
+    result = get_price(symbol)
+    update.message.reply_text(f"{symbol} Price: {result}")
 
-    expiry_minutes = random.choice([1, 2, 5])
+def help_command(update, context):
+    update.message.reply_text(
+        "/start - Start bot\n"
+        "/price EURUSD=X - Get price\n"
+    )
 
-    expiry = entry + timedelta(minutes=expiry_minutes)
+# -------------------------
+# MAIN FUNCTION
+# -------------------------
+def main():
+    logger.info("Bot is starting...")
 
-    msg = f"""
-📊 Asset : {signal['pair']}
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-🕒 Signal Time : {now.strftime('%I:%M:%S %p')}
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("price", price))
+    dp.add_handler(CommandHandler("help", help_command))
 
-⏰ Entry Time : {entry.strftime('%I:%M %p')}
+    updater.start_polling()
+    updater.idle()
 
-⌛ Expiry Time : {expiry.strftime('%I:%M %p')}
-
-📈 Direction : {signal['direction']}
-
-🔥 Accuracy : HIGH
-
-⚡ Strategy :
-EMA + RSI + MACD + Trend Confirmation
-"""
-
-    await bot.send_message(chat_id=CHAT_ID, text=msg)
-
-    print(f"SIGNAL SENT: {signal['pair']}")
-
-    # WAIT FOR EXPIRY
-    await asyncio.sleep(expiry_minutes * 60)
-
-    result = random.choice(["WIN 🟢", "LOSS 🔴"])
-
-    result_msg = f"""
-🏁 Trade Finished
-
-📊 Pair : {signal['pair']}
-
-📈 Direction : {signal['direction']}
-
-📊 Result : {result}
-"""
-
-    await bot.send_message(chat_id=CHAT_ID, text=result_msg)
-
-# =========================
-# MAIN BOT LOOP
-# =========================
-
-async def run_bot():
-
-    print("================================")
-    print("LIVE FOREX BOT STARTED")
-    print("================================")
-
-    while True:
-
-        try:
-
-            best_signal = None
-
-            for pair_name, symbol in LIVE_PAIRS.items():
-
-                signal = get_signal(pair_name, symbol)
-
-                if signal:
-                    best_signal = signal
-                    break
-
-            if best_signal:
-
-                await send_signal(best_signal)
-
-            else:
-
-                print("NO STRONG SIGNAL FOUND")
-
-            await asyncio.sleep(60)
-
-        except Exception as e:
-
-            print("MAIN LOOP ERROR:", e)
-
-            await asyncio.sleep(30)
-
-# =========================
-# START BOT
-# =========================
-
+# -------------------------
+# RUN
+# -------------------------
 if __name__ == "__main__":
-
-    asyncio.run(run_bot())
+    main()

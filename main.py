@@ -1,107 +1,58 @@
 import os
-import time
-import logging
-import yfinance as yf
+import json
+from flask import Flask, request
 from telegram import Bot
-from telegram.ext import Updater, CommandHandler
 
-# -------------------------
-# LOGGING
-# -------------------------
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-
-logger = logging.getLogger(__name__)
-
-# -------------------------
-# ENV VARIABLES (RENDER SAFE)
-# -------------------------
+# -------------------
+# ENV
+# -------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 if not BOT_TOKEN:
-    raise Exception("BOT_TOKEN is missing. Set it in Render Environment Variables.")
+    raise Exception("BOT_TOKEN missing")
 
-# -------------------------
-# INIT BOT
-# -------------------------
 bot = Bot(token=BOT_TOKEN)
 
-# -------------------------
-# SIMPLE CACHE (for rate limit control)
-# -------------------------
-cache = {}
-CACHE_TIME = 30  # seconds
+app = Flask(__name__)
 
-def get_price(symbol="EURUSD=X"):
-    """Fetch price with caching to avoid Yahoo rate limit"""
-    current_time = time.time()
-
-    # return cached if still valid
-    if symbol in cache:
-        data, timestamp = cache[symbol]
-        if current_time - timestamp < CACHE_TIME:
-            return data
-
+# -------------------
+# WEBHOOK ROUTE
+# -------------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
     try:
-        ticker = yf.Ticker(symbol)
-        data = ticker.history(period="1m")
+        data = request.json
 
-        if data.empty:
-            return "No data"
+        signal = data.get("signal")
+        symbol = data.get("symbol", "UNKNOWN")
 
-        price = float(data["Close"].iloc[-1])
+        if signal == "BUY":
+            msg = f"🟢 BUY SIGNAL\nSymbol: {symbol}"
+        elif signal == "SELL":
+            msg = f"🔴 SELL SIGNAL\nSymbol: {symbol}"
+        else:
+            msg = f"⚠ Unknown signal: {data}"
 
-        cache[symbol] = (price, current_time)
-        time.sleep(1)  # small delay to reduce rate limit
+        bot.send_message(chat_id=CHAT_ID, text=msg)
 
-        return price
+        return "ok", 200
 
     except Exception as e:
-        logger.error(f"Error fetching price: {e}")
-        return "Error fetching data"
+        print("Error:", e)
+        return "error", 500
 
-# -------------------------
-# TELEGRAM COMMANDS
-# -------------------------
-def start(update, context):
-    update.message.reply_text("Bot started successfully 🚀")
 
-def price(update, context):
-    symbol = "EURUSD=X"
+# -------------------
+# HOME ROUTE
+# -------------------
+@app.route("/")
+def home():
+    return "TradingView Bot Running 🚀"
 
-    if context.args:
-        symbol = context.args[0]
 
-    result = get_price(symbol)
-    update.message.reply_text(f"{symbol} Price: {result}")
-
-def help_command(update, context):
-    update.message.reply_text(
-        "/start - Start bot\n"
-        "/price EURUSD=X - Get price\n"
-    )
-
-# -------------------------
-# MAIN FUNCTION
-# -------------------------
-def main():
-    logger.info("Bot is starting...")
-
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("price", price))
-    dp.add_handler(CommandHandler("help", help_command))
-
-    updater.start_polling()
-    updater.idle()
-
-# -------------------------
+# -------------------
 # RUN
-# -------------------------
+# -------------------
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=10000)

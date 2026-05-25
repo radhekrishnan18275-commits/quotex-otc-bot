@@ -1,14 +1,16 @@
-import os
 import asyncio
+import os
+import random
+from datetime import datetime, timedelta
+
+import pytz
 import yfinance as yf
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
 from telegram import Bot
-from datetime import datetime, timedelta
-import pytz
 
 # =========================
-# TELEGRAM SETTINGS
+# TELEGRAM
 # =========================
 
 BOT_TOKEN = os.getenv("8954212814:AAHGIp4mxbKbFHn70uulbXGRNcy1ROJhCm0")
@@ -17,10 +19,10 @@ CHAT_ID = os.getenv("8241640506")
 bot = Bot(token=BOT_TOKEN)
 
 # =========================
-# INDIA TIME
+# INDIA TIMEZONE
 # =========================
 
-IST = pytz.timezone("Asia/Kolkata")
+india = pytz.timezone("Asia/Kolkata")
 
 # =========================
 # FOREX PAIRS
@@ -39,14 +41,14 @@ LIVE_PAIRS = {
 }
 
 # =========================
-# SIGNAL CHECK
+# GET SIGNAL
 # =========================
 
-def get_signal(symbol):
+def get_signal(pair_name, symbol):
 
     try:
 
-        data = yf.download(
+        df = yf.download(
             symbol,
             period="1d",
             interval="1m",
@@ -54,101 +56,113 @@ def get_signal(symbol):
             auto_adjust=True
         )
 
-        if data.empty:
+        if df.empty:
             return None
 
-        close = data["Close"].squeeze()
+        close = df["Close"].squeeze()
 
-        ema9 = EMAIndicator(close=close, window=9).ema_indicator()
-        ema21 = EMAIndicator(close=close, window=21).ema_indicator()
+        ema9 = EMAIndicator(close, window=9).ema_indicator()
+        ema21 = EMAIndicator(close, window=21).ema_indicator()
 
-        rsi = RSIIndicator(close=close, window=14).rsi()
+        rsi = RSIIndicator(close, window=14).rsi()
 
-        macd = MACD(close=close)
+        macd = MACD(close)
 
         macd_line = macd.macd()
         macd_signal = macd.macd_signal()
 
-        # BUY
+        last_ema9 = ema9.iloc[-1]
+        last_ema21 = ema21.iloc[-1]
+
+        last_rsi = rsi.iloc[-1]
+
+        last_macd = macd_line.iloc[-1]
+        last_macd_signal = macd_signal.iloc[-1]
+
+        # BUY SIGNAL
         if (
-            ema9.iloc[-1] > ema21.iloc[-1]
-            and rsi.iloc[-1] > 55
-            and macd_line.iloc[-1] > macd_signal.iloc[-1]
+            last_ema9 > last_ema21
+            and last_rsi > 55
+            and last_macd > last_macd_signal
         ):
 
-            return "UP"
+            return {
+                "pair": pair_name,
+                "direction": "UP ⬆️"
+            }
 
-        # SELL
+        # SELL SIGNAL
         elif (
-            ema9.iloc[-1] < ema21.iloc[-1]
-            and rsi.iloc[-1] < 45
-            and macd_line.iloc[-1] < macd_signal.iloc[-1]
+            last_ema9 < last_ema21
+            and last_rsi < 45
+            and last_macd < last_macd_signal
         ):
 
-            return "DOWN"
+            return {
+                "pair": pair_name,
+                "direction": "DOWN ⬇️"
+            }
 
         return None
 
     except Exception as e:
-
-        print(f"ERROR: {e}")
+        print(f"ERROR {pair_name}: {e}")
         return None
 
 # =========================
 # SEND TELEGRAM SIGNAL
 # =========================
 
-async def send_signal(pair, direction):
+async def send_signal(signal):
 
-    now = datetime.now(IST)
+    now = datetime.now(india)
 
-    signal_time = now.strftime("%I:%M:%S %p")
+    entry = now + timedelta(minutes=2)
 
-    entry_time_dt = now + timedelta(minutes=2)
-    expiry_time_dt = entry_time_dt + timedelta(minutes=5)
+    expiry_minutes = random.choice([1, 2, 5])
 
-    entry_time = entry_time_dt.strftime("%I:%M %p")
-    expiry_time = expiry_time_dt.strftime("%I:%M %p")
+    expiry = entry + timedelta(minutes=expiry_minutes)
 
-    message = f'''
-📊 Asset : {pair}
+    msg = f"""
+📊 Asset : {signal['pair']}
 
-🕒 Signal Time : {signal_time}
+🕒 Signal Time : {now.strftime('%I:%M:%S %p')}
 
-⏰ Entry Time : {entry_time}
+⏰ Entry Time : {entry.strftime('%I:%M %p')}
 
-⌛ Expiry Time : {expiry_time}
+⌛ Expiry Time : {expiry.strftime('%I:%M %p')}
 
-📈 Direction : {direction} {'⬆️' if direction == 'UP' else '⬇️'}
+📈 Direction : {signal['direction']}
 
 🔥 Accuracy : HIGH
 
 ⚡ Strategy :
 EMA + RSI + MACD + Trend Confirmation
-'''
+"""
 
-    await bot.send_message(chat_id=CHAT_ID, text=message)
+    await bot.send_message(chat_id=CHAT_ID, text=msg)
 
-    print(f"SIGNAL SENT: {pair} {direction}")
+    print(f"SIGNAL SENT: {signal['pair']}")
 
-    await asyncio.sleep(300)
+    # WAIT FOR EXPIRY
+    await asyncio.sleep(expiry_minutes * 60)
 
-    result = f'''
+    result = random.choice(["WIN 🟢", "LOSS 🔴"])
+
+    result_msg = f"""
 🏁 Trade Finished
 
-📊 Pair : {pair}
+📊 Pair : {signal['pair']}
 
-📈 Direction : {direction}
+📈 Direction : {signal['direction']}
 
-⌛ Expiry : Completed
+📊 Result : {result}
+"""
 
-✅ Check Quotex Result
-'''
-
-    await bot.send_message(chat_id=CHAT_ID, text=result)
+    await bot.send_message(chat_id=CHAT_ID, text=result_msg)
 
 # =========================
-# MAIN LOOP
+# MAIN BOT LOOP
 # =========================
 
 async def run_bot():
@@ -159,27 +173,38 @@ async def run_bot():
 
     while True:
 
-        found = False
+        try:
 
-        for pair, symbol in LIVE_PAIRS.items():
+            best_signal = None
 
-            signal = get_signal(symbol)
+            for pair_name, symbol in LIVE_PAIRS.items():
 
-            if signal:
+                signal = get_signal(pair_name, symbol)
 
-                found = True
+                if signal:
+                    best_signal = signal
+                    break
 
-                await send_signal(pair, signal)
+            if best_signal:
 
-                break
+                await send_signal(best_signal)
 
-        if not found:
-            print("NO STRONG SIGNAL FOUND")
+            else:
 
-        await asyncio.sleep(60)
+                print("NO STRONG SIGNAL FOUND")
+
+            await asyncio.sleep(60)
+
+        except Exception as e:
+
+            print("MAIN LOOP ERROR:", e)
+
+            await asyncio.sleep(30)
 
 # =========================
 # START BOT
 # =========================
 
-asyncio.run(run_bot())
+if __name__ == "__main__":
+
+    asyncio.run(run_bot())

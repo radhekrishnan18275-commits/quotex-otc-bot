@@ -14,11 +14,14 @@ from datetime import datetime, timedelta, timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # =========================================
-# TELEGRAM
+# TELEGRAM SETTINGS
 # =========================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
+print("BOT TOKEN:", BOT_TOKEN)
+print("CHAT ID:", CHAT_ID)
 
 # =========================================
 # FLASK
@@ -27,45 +30,44 @@ CHAT_ID = os.getenv("CHAT_ID")
 app = Flask(__name__)
 
 # =========================================
-# FOREX PAIRS
+# PAIRS
 # =========================================
 
 pairs = [
     "EURUSD",
     "GBPUSD",
     "AUDUSD",
-    "USDJPY",
-    "USDCHF",
-    "USDCAD",
-    "EURJPY",
-    "GBPJPY"
+    "USDJPY"
 ]
 
 # =========================================
-# TELEGRAM SEND
+# TELEGRAM MESSAGE
 # =========================================
 
 def send_telegram(message):
 
     try:
 
+        print("SENDING TELEGRAM...")
+
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-        data = {
+        payload = {
             "chat_id": CHAT_ID,
             "text": message
         }
 
-        r = requests.post(url, data=data)
+        response = requests.post(url, data=payload)
 
-        print("TELEGRAM RESPONSE:", r.text)
+        print("TELEGRAM STATUS:", response.status_code)
+        print("TELEGRAM RESPONSE:", response.text)
 
     except Exception as e:
 
         print("TELEGRAM ERROR:", e)
 
 # =========================================
-# LIVE PRICE
+# GET LIVE PRICE
 # =========================================
 
 def get_live_price(symbol):
@@ -80,11 +82,21 @@ def get_live_price(symbol):
             "User-Agent": "Mozilla/5.0"
         }
 
-        r = requests.get(url, headers=headers)
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=10
+        )
 
-        data = r.json()
+        print("PRICE STATUS:", response.status_code)
+
+        data = response.json()
+
+        print("PRICE DATA:", data)
 
         price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
+
+        print(symbol, "PRICE:", price)
 
         return float(price)
 
@@ -95,16 +107,20 @@ def get_live_price(symbol):
         return None
 
 # =========================================
-# CHECK RESULT
+# RESULT CHECK
 # =========================================
 
 def check_result(symbol, direction, entry_price):
 
     try:
 
+        print("CHECKING RESULT...")
+
         exit_price = get_live_price(symbol)
 
         if exit_price is None:
+
+            print("EXIT PRICE FAILED")
             return
 
         if direction == "BUY":
@@ -115,23 +131,21 @@ def check_result(symbol, direction, entry_price):
 
             result = "WIN" if exit_price < entry_price else "LOSS"
 
-        msg = f"""
-━━━━━━━━━━━━━━
-📊 RESULT
+        result_message = f"""
+RESULT
 
-📈 Asset : {symbol}
+PAIR: {symbol}
 
-📊 Direction : {direction}
+DIRECTION: {direction}
 
-💰 Entry Price : {entry_price}
+ENTRY: {entry_price}
 
-💰 Exit Price : {exit_price}
+EXIT: {exit_price}
 
-🔥 RESULT : {result}
-━━━━━━━━━━━━━━
+FINAL RESULT: {result}
 """
 
-        send_telegram(msg)
+        send_telegram(result_message)
 
     except Exception as e:
 
@@ -142,6 +156,8 @@ def check_result(symbol, direction, entry_price):
 # =========================================
 
 def signal_engine():
+
+    print("SIGNAL ENGINE STARTED")
 
     while True:
 
@@ -154,11 +170,19 @@ def signal_engine():
                 "SELL"
             ])
 
-            expiry = random.choice([
-                1,
-                2,
-                5
-            ])
+            expiry = 1
+
+            print("SELECTED PAIR:", symbol)
+
+            entry_price = get_live_price(symbol)
+
+            if entry_price is None:
+
+                print("ENTRY PRICE FAILED")
+
+                time.sleep(10)
+
+                continue
 
             now = datetime.now(IST)
 
@@ -166,56 +190,37 @@ def signal_engine():
 
             expiry_time = entry_time + timedelta(minutes=expiry)
 
-            entry_price = get_live_price(symbol)
-
-            if entry_price is None:
-
-                time.sleep(10)
-                continue
-
             arrow = "UP ⬆️" if direction == "BUY" else "DOWN ⬇️"
 
-            signal = f"""
-━━━━━━━━━━━━━━
-📊 AI BINARY SIGNAL
+            signal_message = f"""
+AI SIGNAL
 
-📈 Asset : {symbol}
+PAIR: {symbol}
 
-🕒 Signal Time :
-{now.strftime('%I:%M:%S %p')}
+TIME: {now.strftime('%I:%M:%S %p')}
 
-⏰ Entry Time :
-{entry_time.strftime('%I:%M %p')}
+ENTRY: {entry_time.strftime('%I:%M %p')}
 
-⌛ Expiry Time :
-{expiry_time.strftime('%I:%M %p')}
+EXPIRY: {expiry_time.strftime('%I:%M %p')}
 
-📊 Direction :
-{arrow}
+DIRECTION: {arrow}
 
-💰 Entry Price :
-{entry_price}
-
-🔥 Accuracy : HIGH
-
-⚡ Strategy :
-EMA + RSI + MACD + Trend Confirmation
-━━━━━━━━━━━━━━
+PRICE: {entry_price}
 """
 
-            print("SENDING SIGNAL...")
+            send_telegram(signal_message)
 
-            send_telegram(signal)
+            print("SIGNAL SENT SUCCESS")
 
-            # WAIT ENTRY + EXPIRY
+            # WAIT
 
             total_wait = 60 + (expiry * 60)
 
-            print("WAITING:", total_wait)
+            print("WAITING", total_wait, "SECONDS")
 
             time.sleep(total_wait)
 
-            # CHECK RESULT
+            # RESULT
 
             check_result(
                 symbol,
@@ -223,7 +228,7 @@ EMA + RSI + MACD + Trend Confirmation
                 entry_price
             )
 
-            # NEXT SIGNAL
+            print("NEXT SIGNAL IN 20 SEC")
 
             time.sleep(20)
 
@@ -243,7 +248,7 @@ def home():
     return "BOT RUNNING"
 
 # =========================================
-# START ENGINE
+# START THREAD
 # =========================================
 
 threading.Thread(
@@ -252,12 +257,14 @@ threading.Thread(
 ).start()
 
 # =========================================
-# RUN SERVER
+# RUN
 # =========================================
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 10000))
+    port = int(
+        os.environ.get("PORT", 10000)
+    )
 
     app.run(
         host="0.0.0.0",

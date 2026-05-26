@@ -9,30 +9,30 @@ from datetime import datetime, timedelta, timezone
 from flask import Flask
 from telegram import Bot
 
-# =====================================
-# INDIA TIME
-# =====================================
+# =========================================
+# INDIA TIMEZONE
+# =========================================
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# =====================================
-# TELEGRAM
-# =====================================
+# =========================================
+# TELEGRAM SETTINGS
+# =========================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=BOT_TOKEN)
 
-# =====================================
-# FLASK
-# =====================================
+# =========================================
+# FLASK APP
+# =========================================
 
 app = Flask(__name__)
 
-# =====================================
-# PAIRS
-# =====================================
+# =========================================
+# FOREX PAIRS
+# =========================================
 
 pairs = [
 
@@ -47,17 +47,17 @@ pairs = [
 
 ]
 
-# =====================================
+# =========================================
 # STATS
-# =====================================
+# =========================================
 
 total_trades = 0
 total_win = 0
 total_loss = 0
 
-# =====================================
-# TELEGRAM SEND
-# =====================================
+# =========================================
+# SEND TELEGRAM
+# =========================================
 
 async def send_telegram(message):
 
@@ -68,15 +68,15 @@ async def send_telegram(message):
             text=message
         )
 
-        print("MESSAGE SENT")
+        print("TELEGRAM SENT")
 
     except Exception as e:
 
         print("TELEGRAM ERROR:", e)
 
-# =====================================
-# RESULT
-# =====================================
+# =========================================
+# SEND RESULT
+# =========================================
 
 def send_result(symbol, signal):
 
@@ -85,6 +85,7 @@ def send_result(symbol, signal):
 
     try:
 
+        # RANDOM RESULT ENGINE
         result = random.choice([
             "WIN",
             "WIN",
@@ -96,7 +97,7 @@ def send_result(symbol, signal):
 
             total_win += 1
 
-            msg = f"""
+            result_message = f"""
 ━━━━━━━━━━━━━━
 ✅ RESULT : WIN
 
@@ -112,7 +113,7 @@ def send_result(symbol, signal):
 
             total_loss += 1
 
-            msg = f"""
+            result_message = f"""
 ━━━━━━━━━━━━━━
 ❌ RESULT : LOSS
 
@@ -123,16 +124,18 @@ def send_result(symbol, signal):
 """
 
         asyncio.run(
-            send_telegram(msg)
+            send_telegram(result_message)
         )
+
+        print("RESULT SENT")
 
     except Exception as e:
 
         print("RESULT ERROR:", e)
 
-# =====================================
+# =========================================
 # DAILY SUMMARY
-# =====================================
+# =========================================
 
 def daily_summary():
 
@@ -140,58 +143,81 @@ def daily_summary():
     global total_win
     global total_loss
 
-    while True:
+    last_summary_date = None
 
-        time.sleep(86400)
+    while True:
 
         try:
 
-            if total_trades > 0:
+            now = datetime.now(IST)
 
-                accuracy = round(
-                    (total_win / total_trades) * 100,
-                    2
-                )
+            current_date = now.strftime("%Y-%m-%d")
 
-            else:
+            current_hour = now.hour
 
-                accuracy = 0
+            current_minute = now.minute
 
-            summary = f"""
+            # SEND SUMMARY DAILY AT 11:59 PM
+            if (
+                current_hour == 23 and
+                current_minute == 59 and
+                last_summary_date != current_date
+            ):
+
+                if total_trades > 0:
+
+                    accuracy = round(
+                        (total_win / total_trades) * 100,
+                        2
+                    )
+
+                else:
+
+                    accuracy = 0
+
+                summary_message = f"""
 ━━━━━━━━━━━━━━
 📊 DAILY SUMMARY
 
 📈 Total Signals :
 {total_trades}
 
-✅ Total WIN :
+✅ WIN :
 {total_win}
 
-❌ Total LOSS :
+❌ LOSS :
 {total_loss}
 
 🔥 Accuracy :
 {accuracy}%
-
 ━━━━━━━━━━━━━━
 """
 
-            asyncio.run(
-                send_telegram(summary)
-            )
+                asyncio.run(
+                    send_telegram(summary_message)
+                )
 
-            # RESET
-            total_trades = 0
-            total_win = 0
-            total_loss = 0
+                print("SUMMARY SENT")
+
+                last_summary_date = current_date
+
+                # RESET
+                total_trades = 0
+                total_win = 0
+                total_loss = 0
+
+            # KEEP RENDER ACTIVE
+            time.sleep(30)
 
         except Exception as e:
 
             print("SUMMARY ERROR:", e)
 
-# =====================================
+            time.sleep(5)
+
+# =========================================
 # SIGNAL ENGINE
-# =====================================
+# =========================================
 
 def signal_engine():
 
@@ -230,7 +256,7 @@ def signal_engine():
                 timedelta(minutes=expiry)
             )
 
-            signal_msg = f"""
+            signal_message = f"""
 ━━━━━━━━━━━━━━
 📊 AI OTC SIGNAL
 
@@ -256,7 +282,7 @@ EMA + RSI + MACD + Trend Confirmation
 """
 
             asyncio.run(
-                send_telegram(signal_msg)
+                send_telegram(signal_message)
             )
 
             total_trades += 1
@@ -264,39 +290,42 @@ EMA + RSI + MACD + Trend Confirmation
             print("SIGNAL SENT")
 
             # WAIT FOR ENTRY + EXPIRY
-            wait_seconds = (
+            total_wait = (
                 60 +
                 (expiry * 60)
             )
 
-            time.sleep(wait_seconds)
+            # SAFE WAIT LOOP
+            for i in range(total_wait):
 
-            # RESULT
+                time.sleep(1)
+
+            # SEND RESULT
             send_result(symbol, signal)
 
-            print("RESULT SENT")
+            # NEXT SIGNAL GAP
+            for i in range(20):
 
-            # WAIT BEFORE NEXT SIGNAL
-            time.sleep(20)
+                time.sleep(1)
 
         except Exception as e:
 
             print("ENGINE ERROR:", e)
 
-            time.sleep(10)
+            time.sleep(5)
 
-# =====================================
-# HOME
-# =====================================
+# =========================================
+# HOME PAGE
+# =========================================
 
 @app.route("/")
 def home():
 
-    return "AI Binary Signal Bot Running 🚀"
+    return "AI Binary Bot Running 🚀"
 
-# =====================================
+# =========================================
 # START THREADS
-# =====================================
+# =========================================
 
 threading.Thread(
     target=signal_engine,
@@ -308,9 +337,9 @@ threading.Thread(
     daemon=True
 ).start()
 
-# =====================================
-# SERVER
-# =====================================
+# =========================================
+# START SERVER
+# =========================================
 
 if __name__ == "__main__":
 

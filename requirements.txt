@@ -1,10 +1,2 @@
 flask
 python-telegram-bot
-requests
-yfinance
-pandas
-numpy
-ta
-pytz
-curl_cffi
-lxml

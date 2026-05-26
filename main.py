@@ -1,124 +1,91 @@
 import os
 import asyncio
-import requests
-import yfinance as yf
 
 from datetime import datetime, timedelta
+
 from flask import Flask, request
 from telegram import Bot
 
-# =========================================
-# SETTINGS
-# =========================================
+# =====================================
+# TELEGRAM SETTINGS
+# =====================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=BOT_TOKEN)
 
+# =====================================
+# FLASK APP
+# =====================================
+
 app = Flask(__name__)
 
-# =========================================
-# SEND TELEGRAM MESSAGE
-# =========================================
-
-async def send_telegram_message(message):
-
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text=message
-    )
-
-# =========================================
-# GET LIVE FOREX PRICE
-# =========================================
+# =====================================
+# DEMO LIVE PRICE
+# =====================================
 
 def get_live_price(symbol):
 
-    try:
+    forex_prices = {
 
-        pair = symbol.replace("/", "")
+        "EURUSD": 1.0850,
+        "GBPUSD": 1.2740,
+        "AUDUSD": 0.6640,
+        "USDJPY": 156.20,
+        "USDCHF": 0.9100,
+        "USDCAD": 1.3700
 
-        forex_map = {
-            "EURUSD": "EURUSD=X",
-            "GBPUSD": "GBPUSD=X",
-            "AUDUSD": "AUDUSD=X",
-            "USDJPY": "JPY=X",
-            "USDCHF": "CHF=X",
-            "USDCAD": "CAD=X"
-        }
+    }
 
-        ticker = forex_map.get(pair, "EURUSD=X")
+    return forex_prices.get(symbol, 1.0000)
 
-        data = yf.Ticker(ticker)
+# =====================================
+# SEND TELEGRAM MESSAGE
+# =====================================
 
-        candles = data.history(
-            period="1d",
-            interval="1m"
-        )
+async def send_message(text):
 
-        if not candles.empty:
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=text
+    )
 
-            price = candles["Close"].iloc[-1]
-
-            return float(price)
-
-    except Exception as e:
-
-        print("PRICE FETCH ERROR:", e)
-
-    return None
-
-# =========================================
-# CHECK RESULT
-# =========================================
-
-def check_trade_result(symbol, signal, entry_price):
-
-    final_price = get_live_price(symbol)
-
-    if final_price is None:
-
-        return "UNKNOWN"
-
-    if signal == "BUY":
-
-        if final_price > entry_price:
-            return "WIN"
-        else:
-            return "LOSS"
-
-    if signal == "SELL":
-
-        if final_price < entry_price:
-            return "WIN"
-        else:
-            return "LOSS"
-
-    return "UNKNOWN"
-
-# =========================================
+# =====================================
 # RESULT ENGINE
-# =========================================
+# =====================================
 
 async def result_engine(
     symbol,
     signal,
     entry_price,
-    expiry_minutes
+    expiry
 ):
 
-    await asyncio.sleep(expiry_minutes * 60)
+    # WAIT FOR EXPIRY
+    await asyncio.sleep(expiry * 60)
 
-    result = check_trade_result(
-        symbol,
-        signal,
-        entry_price
-    )
+    final_price = get_live_price(symbol)
 
+    # RESULT LOGIC
+    if signal == "BUY":
+
+        if final_price >= entry_price:
+            result = "WIN"
+        else:
+            result = "LOSS"
+
+    else:
+
+        if final_price <= entry_price:
+            result = "WIN"
+        else:
+            result = "LOSS"
+
+    # RESULT MESSAGE
     if result == "WIN":
 
-        result_message = f"""
+        msg = f"""
 ━━━━━━━━━━━━━━
 ✅ RESULT : WIN
 
@@ -132,7 +99,7 @@ async def result_engine(
 
     else:
 
-        result_message = f"""
+        msg = f"""
 ━━━━━━━━━━━━━━
 ❌ RESULT : LOSS
 
@@ -142,26 +109,27 @@ async def result_engine(
 ━━━━━━━━━━━━━━
 """
 
-    await send_telegram_message(result_message)
+    await send_message(msg)
 
-# =========================================
-# HOME
-# =========================================
+# =====================================
+# HOME ROUTE
+# =====================================
 
 @app.route("/")
 def home():
 
     return "AI Binary Bot Running 🚀"
 
-# =========================================
-# WEBHOOK
-# =========================================
+# =====================================
+# WEBHOOK ROUTE
+# =====================================
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
     try:
 
+        # RECEIVE JSON
         data = request.json
 
         signal = data.get("signal", "BUY")
@@ -170,12 +138,14 @@ def webhook():
 
         expiry = int(data.get("expiry", 1))
 
+        # DIRECTION
         direction = (
             "UP ⬆️"
             if signal == "BUY"
             else "DOWN ⬇️"
         )
 
+        # TIMES
         now = datetime.now()
 
         entry_time = now + timedelta(minutes=1)
@@ -185,13 +155,11 @@ def webhook():
             timedelta(minutes=expiry)
         )
 
+        # GET ENTRY PRICE
         entry_price = get_live_price(symbol)
 
-        if entry_price is None:
-
-            return "PRICE ERROR", 500
-
-        message = f"""
+        # SIGNAL MESSAGE
+        signal_message = f"""
 ━━━━━━━━━━━━━━
 📊 AI OTC SIGNAL
 
@@ -216,10 +184,12 @@ EMA + RSI + MACD + Trend Confirmation
 ━━━━━━━━━━━━━━
 """
 
+        # SEND SIGNAL
         asyncio.run(
-            send_telegram_message(message)
+            send_message(signal_message)
         )
 
+        # START RESULT ENGINE
         asyncio.run(
             result_engine(
                 symbol,
@@ -233,13 +203,13 @@ EMA + RSI + MACD + Trend Confirmation
 
     except Exception as e:
 
-        print("WEBHOOK ERROR:", e)
+        print("ERROR:", e)
 
         return "ERROR", 500
 
-# =========================================
+# =====================================
 # START SERVER
-# =========================================
+# =====================================
 
 if __name__ == "__main__":
 

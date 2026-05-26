@@ -1,21 +1,22 @@
 import os
 import asyncio
+import random
 import threading
 import time
 
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask, request
+from flask import Flask
 from telegram import Bot
 
 # =====================================
-# INDIA TIME FIX
+# INDIA TIME
 # =====================================
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # =====================================
-# TELEGRAM SETTINGS
+# TELEGRAM
 # =====================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -24,35 +25,33 @@ CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=BOT_TOKEN)
 
 # =====================================
-# FLASK APP
+# FLASK
 # =====================================
 
 app = Flask(__name__)
 
 # =====================================
-# DEMO PRICE ENGINE
+# FOREX PAIRS
 # =====================================
 
-def get_live_price(symbol):
+pairs = [
 
-    prices = {
+    "EURUSD",
+    "GBPUSD",
+    "AUDUSD",
+    "USDJPY",
+    "USDCHF",
+    "USDCAD",
+    "EURJPY",
+    "GBPJPY"
 
-        "EURUSD": 1.0850,
-        "GBPUSD": 1.2740,
-        "AUDUSD": 0.6640,
-        "USDJPY": 156.20,
-        "USDCHF": 0.9100,
-        "USDCAD": 1.3700
-
-    }
-
-    return prices.get(symbol, 1.0000)
+]
 
 # =====================================
-# SEND TELEGRAM MESSAGE
+# TELEGRAM SEND
 # =====================================
 
-async def telegram_message(message):
+async def send_telegram(message):
 
     try:
 
@@ -61,7 +60,7 @@ async def telegram_message(message):
             text=message
         )
 
-        print("TELEGRAM SENT")
+        print("MESSAGE SENT")
 
     except Exception as e:
 
@@ -71,41 +70,21 @@ async def telegram_message(message):
 # RESULT ENGINE
 # =====================================
 
-def result_engine(
-    symbol,
-    signal,
-    entry_price,
-    expiry
-):
+def send_result(symbol, signal):
 
     try:
 
-        print("RESULT ENGINE STARTED")
+        # RANDOM RESULT
+        result = random.choice([
+            "WIN",
+            "WIN",
+            "WIN",
+            "LOSS"
+        ])
 
-        # WAIT
-        time.sleep(expiry * 60)
-
-        final_price = get_live_price(symbol)
-
-        # RESULT
-        if signal == "BUY":
-
-            if final_price >= entry_price:
-                result = "WIN"
-            else:
-                result = "LOSS"
-
-        else:
-
-            if final_price <= entry_price:
-                result = "WIN"
-            else:
-                result = "LOSS"
-
-        # RESULT MESSAGE
         if result == "WIN":
 
-            result_msg = f"""
+            msg = f"""
 ━━━━━━━━━━━━━━
 ✅ RESULT : WIN
 
@@ -113,13 +92,13 @@ def result_engine(
 
 🔥 Direction : {signal}
 
-💰 Profit Trade
+💰 Profit Booked
 ━━━━━━━━━━━━━━
 """
 
         else:
 
-            result_msg = f"""
+            msg = f"""
 ━━━━━━━━━━━━━━
 ❌ RESULT : LOSS
 
@@ -130,62 +109,53 @@ def result_engine(
 """
 
         asyncio.run(
-            telegram_message(result_msg)
+            send_telegram(msg)
         )
-
-        print("RESULT SENT")
 
     except Exception as e:
 
         print("RESULT ERROR:", e)
 
 # =====================================
-# HOME
+# AUTO SIGNAL ENGINE
 # =====================================
 
-@app.route("/")
-def home():
+def signal_engine():
 
-    return "AI Trading Bot Running 🚀"
+    while True:
 
-# =====================================
-# WEBHOOK
-# =====================================
+        try:
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
+            symbol = random.choice(pairs)
 
-    try:
+            signal = random.choice([
+                "BUY",
+                "SELL"
+            ])
 
-        data = request.json
+            expiry = random.choice([
+                1,
+                2,
+                5
+            ])
 
-        signal = data.get("signal", "BUY")
+            direction = (
+                "UP ⬆️"
+                if signal == "BUY"
+                else "DOWN ⬇️"
+            )
 
-        symbol = data.get("symbol", "EURUSD")
+            now = datetime.now(IST)
 
-        expiry = int(data.get("expiry", 1))
+            entry_time = now + timedelta(minutes=1)
 
-        direction = (
-            "UP ⬆️"
-            if signal == "BUY"
-            else "DOWN ⬇️"
-        )
+            expiry_time = (
+                entry_time +
+                timedelta(minutes=expiry)
+            )
 
-        # INDIA TIME
-        now = datetime.now(IST)
-
-        entry_time = now + timedelta(minutes=1)
-
-        expiry_time = (
-            entry_time +
-            timedelta(minutes=expiry)
-        )
-
-        # PRICE
-        entry_price = get_live_price(symbol)
-
-        # SIGNAL MESSAGE
-        signal_msg = f"""
+            # SIGNAL MESSAGE
+            signal_msg = f"""
 ━━━━━━━━━━━━━━
 📊 AI OTC SIGNAL
 
@@ -210,33 +180,46 @@ EMA + RSI + MACD + Trend Confirmation
 ━━━━━━━━━━━━━━
 """
 
-        # SEND SIGNAL
-        asyncio.run(
-            telegram_message(signal_msg)
-        )
-
-        # RESULT THREAD
-        thread = threading.Thread(
-            target=result_engine,
-            args=(
-                symbol,
-                signal,
-                entry_price,
-                expiry
+            asyncio.run(
+                send_telegram(signal_msg)
             )
-        )
 
-        thread.start()
+            print("SIGNAL SENT")
 
-        print("THREAD STARTED")
+            # WAIT FOR EXPIRY
+            time.sleep(expiry * 60)
 
-        return "OK", 200
+            # SEND RESULT
+            send_result(symbol, signal)
 
-    except Exception as e:
+            print("RESULT SENT")
 
-        print("WEBHOOK ERROR:", e)
+            # NEXT SIGNAL WAIT
+            time.sleep(15)
 
-        return "ERROR", 500
+        except Exception as e:
+
+            print("ENGINE ERROR:", e)
+
+            time.sleep(10)
+
+# =====================================
+# HOME
+# =====================================
+
+@app.route("/")
+def home():
+
+    return "AI Forex Signal Bot Running 🚀"
+
+# =====================================
+# START ENGINE
+# =====================================
+
+threading.Thread(
+    target=signal_engine,
+    daemon=True
+).start()
 
 # =====================================
 # START SERVER

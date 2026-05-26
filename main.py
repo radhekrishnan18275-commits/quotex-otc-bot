@@ -3,17 +3,16 @@ import asyncio
 import threading
 import time
 
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, request
 from telegram import Bot
 
 # =====================================
-# INDIA TIMEZONE
+# INDIA TIME FIX
 # =====================================
 
-india = pytz.timezone("Asia/Kolkata")
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # =====================================
 # TELEGRAM SETTINGS
@@ -31,7 +30,7 @@ bot = Bot(token=BOT_TOKEN)
 app = Flask(__name__)
 
 # =====================================
-# DEMO LIVE PRICE
+# DEMO PRICE ENGINE
 # =====================================
 
 def get_live_price(symbol):
@@ -83,12 +82,12 @@ def result_engine(
 
         print("RESULT ENGINE STARTED")
 
-        # WAIT FOR EXPIRY
+        # WAIT
         time.sleep(expiry * 60)
 
         final_price = get_live_price(symbol)
 
-        # RESULT LOGIC
+        # RESULT
         if signal == "BUY":
 
             if final_price >= entry_price:
@@ -138,7 +137,7 @@ def result_engine(
 
     except Exception as e:
 
-        print("RESULT ENGINE ERROR:", e)
+        print("RESULT ERROR:", e)
 
 # =====================================
 # HOME
@@ -173,7 +172,7 @@ def webhook():
         )
 
         # INDIA TIME
-        now = datetime.now(india)
+        now = datetime.now(IST)
 
         entry_time = now + timedelta(minutes=1)
 
@@ -182,7 +181,7 @@ def webhook():
             timedelta(minutes=expiry)
         )
 
-        # ENTRY PRICE
+        # PRICE
         entry_price = get_live_price(symbol)
 
         # SIGNAL MESSAGE
@@ -216,7 +215,7 @@ EMA + RSI + MACD + Trend Confirmation
             telegram_message(signal_msg)
         )
 
-        # START RESULT ENGINE
+        # RESULT THREAD
         thread = threading.Thread(
             target=result_engine,
             args=(

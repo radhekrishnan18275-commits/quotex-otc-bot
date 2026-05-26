@@ -31,7 +31,7 @@ bot = Bot(token=BOT_TOKEN)
 app = Flask(__name__)
 
 # =====================================
-# FOREX PAIRS
+# PAIRS
 # =====================================
 
 pairs = [
@@ -46,6 +46,14 @@ pairs = [
     "GBPJPY"
 
 ]
+
+# =====================================
+# STATS
+# =====================================
+
+total_trades = 0
+total_win = 0
+total_loss = 0
 
 # =====================================
 # TELEGRAM SEND
@@ -67,14 +75,16 @@ async def send_telegram(message):
         print("TELEGRAM ERROR:", e)
 
 # =====================================
-# RESULT ENGINE
+# RESULT
 # =====================================
 
 def send_result(symbol, signal):
 
+    global total_win
+    global total_loss
+
     try:
 
-        # RANDOM RESULT
         result = random.choice([
             "WIN",
             "WIN",
@@ -83,6 +93,8 @@ def send_result(symbol, signal):
         ])
 
         if result == "WIN":
+
+            total_win += 1
 
             msg = f"""
 ━━━━━━━━━━━━━━
@@ -97,6 +109,8 @@ def send_result(symbol, signal):
 """
 
         else:
+
+            total_loss += 1
 
             msg = f"""
 ━━━━━━━━━━━━━━
@@ -117,10 +131,71 @@ def send_result(symbol, signal):
         print("RESULT ERROR:", e)
 
 # =====================================
-# AUTO SIGNAL ENGINE
+# DAILY SUMMARY
+# =====================================
+
+def daily_summary():
+
+    global total_trades
+    global total_win
+    global total_loss
+
+    while True:
+
+        time.sleep(86400)
+
+        try:
+
+            if total_trades > 0:
+
+                accuracy = round(
+                    (total_win / total_trades) * 100,
+                    2
+                )
+
+            else:
+
+                accuracy = 0
+
+            summary = f"""
+━━━━━━━━━━━━━━
+📊 DAILY SUMMARY
+
+📈 Total Signals :
+{total_trades}
+
+✅ Total WIN :
+{total_win}
+
+❌ Total LOSS :
+{total_loss}
+
+🔥 Accuracy :
+{accuracy}%
+
+━━━━━━━━━━━━━━
+"""
+
+            asyncio.run(
+                send_telegram(summary)
+            )
+
+            # RESET
+            total_trades = 0
+            total_win = 0
+            total_loss = 0
+
+        except Exception as e:
+
+            print("SUMMARY ERROR:", e)
+
+# =====================================
+# SIGNAL ENGINE
 # =====================================
 
 def signal_engine():
+
+    global total_trades
 
     while True:
 
@@ -147,6 +222,7 @@ def signal_engine():
 
             now = datetime.now(IST)
 
+            # SIGNAL BEFORE 1 MINUTE
             entry_time = now + timedelta(minutes=1)
 
             expiry_time = (
@@ -154,7 +230,6 @@ def signal_engine():
                 timedelta(minutes=expiry)
             )
 
-            # SIGNAL MESSAGE
             signal_msg = f"""
 ━━━━━━━━━━━━━━
 📊 AI OTC SIGNAL
@@ -184,18 +259,25 @@ EMA + RSI + MACD + Trend Confirmation
                 send_telegram(signal_msg)
             )
 
+            total_trades += 1
+
             print("SIGNAL SENT")
 
-            # WAIT FOR EXPIRY
-            time.sleep(expiry * 60)
+            # WAIT FOR ENTRY + EXPIRY
+            wait_seconds = (
+                60 +
+                (expiry * 60)
+            )
 
-            # SEND RESULT
+            time.sleep(wait_seconds)
+
+            # RESULT
             send_result(symbol, signal)
 
             print("RESULT SENT")
 
-            # NEXT SIGNAL WAIT
-            time.sleep(15)
+            # WAIT BEFORE NEXT SIGNAL
+            time.sleep(20)
 
         except Exception as e:
 
@@ -210,10 +292,10 @@ EMA + RSI + MACD + Trend Confirmation
 @app.route("/")
 def home():
 
-    return "AI Forex Signal Bot Running 🚀"
+    return "AI Binary Signal Bot Running 🚀"
 
 # =====================================
-# START ENGINE
+# START THREADS
 # =====================================
 
 threading.Thread(
@@ -221,8 +303,13 @@ threading.Thread(
     daemon=True
 ).start()
 
+threading.Thread(
+    target=daily_summary,
+    daemon=True
+).start()
+
 # =====================================
-# START SERVER
+# SERVER
 # =====================================
 
 if __name__ == "__main__":

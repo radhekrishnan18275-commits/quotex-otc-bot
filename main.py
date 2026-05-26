@@ -1,77 +1,195 @@
 import os
 import asyncio
+import time
+import requests
+
+from datetime import datetime, timedelta
 from flask import Flask, request
 from telegram import Bot
 
-# -----------------------
-# ENV VARIABLES
-# -----------------------
+# =========================================
+# SETTINGS
+# =========================================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-if not BOT_TOKEN or not CHAT_ID:
-    raise Exception("BOT_TOKEN or CHAT_ID missing")
-
-# -----------------------
-# FLASK APP
-# -----------------------
-app = Flask(__name__)
-
-# -----------------------
-# TELEGRAM BOT
-# -----------------------
 bot = Bot(token=BOT_TOKEN)
 
-# -----------------------
+app = Flask(__name__)
+
+# =========================================
 # SEND TELEGRAM MESSAGE
-# -----------------------
+# =========================================
+
 async def send_telegram_message(message):
     await bot.send_message(chat_id=CHAT_ID, text=message)
 
-# -----------------------
-# HOME ROUTE
-# -----------------------
+# =========================================
+# GET LIVE PRICE
+# =========================================
+
+def get_live_price(symbol):
+
+    pair = symbol.replace("/", "") + "=X"
+
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}"
+
+    try:
+        response = requests.get(url).json()
+
+        price = response["chart"]["result"][0]["meta"]["regularMarketPrice"]
+
+        return float(price)
+
+    except:
+        return None
+
+# =========================================
+# CHECK RESULT
+# =========================================
+
+def check_trade_result(symbol, direction, entry_price):
+
+    final_price = get_live_price(symbol)
+
+    if final_price is None:
+        return "UNKNOWN"
+
+    if direction == "BUY":
+
+        if final_price > entry_price:
+            return "WIN"
+        else:
+            return "LOSS"
+
+    if direction == "SELL":
+
+        if final_price < entry_price:
+            return "WIN"
+        else:
+            return "LOSS"
+
+    return "UNKNOWN"
+
+# =========================================
+# RESULT ENGINE
+# =========================================
+
+async def result_engine(symbol, direction, entry_price, expiry_minutes):
+
+    await asyncio.sleep(expiry_minutes * 60)
+
+    result = check_trade_result(symbol, direction, entry_price)
+
+    if result == "WIN":
+
+        msg = f"""
+━━━━━━━━━━━━━━
+✅ RESULT : WIN
+
+📈 Asset : {symbol}
+🔥 Direction : {direction}
+
+💰 Profit Trade
+━━━━━━━━━━━━━━
+"""
+
+    else:
+
+        msg = f"""
+━━━━━━━━━━━━━━
+❌ RESULT : LOSS
+
+📉 Asset : {symbol}
+⚠ Market Reversed
+━━━━━━━━━━━━━━
+"""
+
+    await send_telegram_message(msg)
+
+# =========================================
+# HOME
+# =========================================
+
 @app.route("/")
 def home():
-    return "Bot is running 🚀"
+    return "AI Binary Bot Running 🚀"
 
-# -----------------------
-# WEBHOOK ROUTE
-# -----------------------
+# =========================================
+# WEBHOOK
+# =========================================
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
+
     try:
+
         data = request.json
-        print("DATA RECEIVED:", data)
 
-        signal = data.get("signal", "UNKNOWN")
-        symbol = data.get("symbol", "UNKNOWN")
+        signal = data.get("signal", "BUY")
+        symbol = data.get("symbol", "AUDUSD")
+        expiry = int(data.get("expiry", 1))
 
-        if signal == "BUY":
-            msg = f"🟢 BUY SIGNAL\nSymbol: {symbol}"
+        direction = "UP ⬆️" if signal == "BUY" else "DOWN ⬇️"
 
-        elif signal == "SELL":
-            msg = f"🔴 SELL SIGNAL\nSymbol: {symbol}"
+        now = datetime.now()
 
-        else:
-            msg = f"⚠ SIGNAL RECEIVED\n{data}"
+        entry_time = now + timedelta(minutes=1)
 
-        print("SENDING MESSAGE:", msg)
-        print("CHAT ID:", CHAT_ID)
+        expiry_time = entry_time + timedelta(minutes=expiry)
 
-        asyncio.run(send_telegram_message(msg))
+        entry_price = get_live_price(symbol)
 
-        print("MESSAGE SENT SUCCESS")
+        if entry_price is None:
+            return "PRICE ERROR", 500
+
+        message = f"""
+━━━━━━━━━━━━━━
+📊 AI OTC SIGNAL
+
+Asset : {symbol}
+
+🕒 Signal Time : {now.strftime('%I:%M:%S %p')}
+
+⏰ Entry Time : {entry_time.strftime('%I:%M %p')}
+
+⌛ Expiry Time : {expiry_time.strftime('%I:%M %p')}
+
+📈 Direction : {direction}
+
+🔥 Accuracy : HIGH
+
+⚡ Strategy :
+EMA + RSI + MACD + Trend Confirmation
+━━━━━━━━━━━━━━
+"""
+
+        asyncio.run(send_telegram_message(message))
+
+        asyncio.run(
+            result_engine(
+                symbol,
+                signal,
+                entry_price,
+                expiry
+            )
+        )
 
         return "OK", 200
 
     except Exception as e:
-        print("FULL ERROR:", e)
+
+        print("ERROR:", e)
+
         return "ERROR", 500
 
-# -----------------------
+# =========================================
 # START SERVER
-# -----------------------
+# =========================================
+
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", 10000))
+
     app.run(host="0.0.0.0", port=port)

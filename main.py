@@ -1,20 +1,20 @@
 import os
 import time
-import random
 import threading
 import requests
+import random
+from datetime import datetime, timedelta
+import pytz
 import pandas as pd
 import yfinance as yf
-import pytz
 
+from flask import Flask
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
-from flask import Flask
-from datetime import datetime, timedelta
 
-# =====================================================
-# SETTINGS
-# =====================================================
+# =========================
+# BOT CONFIG
+# =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -26,206 +26,152 @@ india = pytz.timezone("Asia/Kolkata")
 pairs = [
     "EURUSD=X",
     "GBPUSD=X",
-    "AUDUSD=X",
     "USDJPY=X",
+    "AUDUSD=X",
     "USDCAD=X",
-    "USDCHF=X"
+    "USDCHF=X",
+    "EURJPY=X"
 ]
+
+# =========================
+# STATS
+# =========================
 
 wins = 0
 losses = 0
 total = 0
 
-# =====================================================
+# =========================
 # TELEGRAM
-# =====================================================
+# =========================
 
-def send_message(text):
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-    data = {
-        "chat_id": CHAT_ID,
-        "text": text
-    }
-
+def send(msg):
     try:
-        requests.post(url, data=data)
-
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
     except Exception as e:
         print("TELEGRAM ERROR:", e)
 
-# =====================================================
-# GET MARKET DATA
-# =====================================================
+# =========================
+# MARKET DATA
+# =========================
 
-def get_data(pair):
-
+def get_data(symbol):
     try:
-
-        df = yf.download(
-            pair,
-            interval="1m",
-            period="1d",
-            progress=False
-        )
-
+        df = yf.download(symbol, interval="1m", period="1d", progress=False)
         return df
-
-    except Exception as e:
-
-        print("DATA ERROR:", e)
-
+    except:
         return None
 
-# =====================================================
-# AI SIGNAL ENGINE
-# =====================================================
+# =========================
+# SIGNAL ENGINE (REAL LOGIC)
+# =========================
 
-def generate_signal(pair):
+def generate_signal(symbol):
 
-    df = get_data(pair)
-
-    if df is None:
-        return None
-
-    if len(df) < 50:
+    df = get_data(symbol)
+    if df is None or len(df) < 50:
         return None
 
     close = df["Close"]
 
-    ema_fast = EMAIndicator(close, window=9).ema_indicator()
-    ema_slow = EMAIndicator(close, window=21).ema_indicator()
-
+    ema9 = EMAIndicator(close, window=9).ema_indicator()
+    ema21 = EMAIndicator(close, window=21).ema_indicator()
     rsi = RSIIndicator(close, window=14).rsi()
-
     macd = MACD(close)
 
     macd_line = macd.macd()
-    macd_signal = macd.macd_signal()
+    signal_line = macd.macd_signal()
 
-    last_price = round(close.iloc[-1], 5)
+    price = float(close.iloc[-1])
 
-    # =================================================
-    # BUY CONDITIONS
-    # =================================================
+    buy_score = 0
+    sell_score = 0
 
-    buy_condition = (
-        ema_fast.iloc[-1] > ema_slow.iloc[-1]
-        and rsi.iloc[-1] > 55
-        and macd_line.iloc[-1] > macd_signal.iloc[-1]
-    )
+    if ema9.iloc[-1] > ema21.iloc[-1]:
+        buy_score += 1
+    else:
+        sell_score += 1
 
-    # =================================================
-    # SELL CONDITIONS
-    # =================================================
+    if rsi.iloc[-1] > 50:
+        buy_score += 1
+    else:
+        sell_score += 1
 
-    sell_condition = (
-        ema_fast.iloc[-1] < ema_slow.iloc[-1]
-        and rsi.iloc[-1] < 45
-        and macd_line.iloc[-1] < macd_signal.iloc[-1]
-    )
+    if macd_line.iloc[-1] > signal_line.iloc[-1]:
+        buy_score += 1
+    else:
+        sell_score += 1
 
-    if buy_condition:
+    if buy_score >= 2:
+        return symbol, "BUY", "UP ⬆️", price
 
-        return {
-            "pair": pair.replace("=X", ""),
-            "direction": "UP ⬆️",
-            "type": "BUY",
-            "price": last_price,
-            "accuracy": random.randint(88, 95)
-        }
-
-    elif sell_condition:
-
-        return {
-            "pair": pair.replace("=X", ""),
-            "direction": "DOWN ⬇️",
-            "type": "SELL",
-            "price": last_price,
-            "accuracy": random.randint(88, 95)
-        }
+    if sell_score >= 2:
+        return symbol, "SELL", "DOWN ⬇️", price
 
     return None
 
-# =====================================================
-# RESULT CHECKER
-# =====================================================
+# =========================
+# RESULT CHECK
+# =========================
 
-def result_checker(pair, trade_type, entry_price, expiry):
+def check_result(symbol, direction, entry_price, minutes):
 
-    global wins
-    global losses
-    global total
+    global wins, losses, total
 
-    time.sleep(expiry * 60)
+    time.sleep(minutes * 60)
 
-    df = get_data(pair + "=X")
+    df = get_data(symbol)
 
     if df is None:
         return
 
-    exit_price = round(df["Close"].iloc[-1], 5)
+    exit_price = float(df["Close"].iloc[-1])
 
-    result = "LOSS ❌"
-
-    if trade_type == "BUY":
-
-        if exit_price > entry_price:
-            result = "WIN ✅"
-
+    if direction == "BUY":
+        result = "WIN ✅" if exit_price > entry_price else "LOSS ❌"
     else:
+        result = "WIN ✅" if exit_price < entry_price else "LOSS ❌"
 
-        if exit_price < entry_price:
-            result = "WIN ✅"
+    total += 1
 
     if "WIN" in result:
         wins += 1
     else:
         losses += 1
 
-    total = wins + losses
-
     winrate = round((wins / total) * 100, 2)
 
-    result_msg = f"""
+    msg = f"""
 ━━━━━━━━━━━━━━
-📢 AI BINARY RESULT
+📊 RESULT UPDATE
 
-📈 Asset : {pair}
+📈 Asset: {symbol.replace('=X','')}
 
-💰 Entry Price :
-{entry_price}
+💰 Entry: {entry_price}
+💵 Exit: {exit_price}
 
-💵 Exit Price :
-{exit_price}
-
-📊 Direction :
-{trade_type}
-
-🏁 Final Result :
-{result}
+🏁 Result: {result}
 
 ━━━━━━━━━━━━━━
-📊 DAILY SUMMARY
+📊 SUMMARY
 
-✅ Wins : {wins}
-
-❌ Losses : {losses}
-
-📈 Total : {total}
-
-🎯 Win Rate : {winrate}%
+Total: {total}
+Wins: {wins}
+Losses: {losses}
+Win Rate: {winrate}%
 ━━━━━━━━━━━━━━
 """
 
-    send_message(result_msg)
+    send(msg)
 
-# =====================================================
-# MAIN ENGINE
-# =====================================================
+# =========================
+# SIGNAL LOOP (24/7)
+# =========================
 
-def trading_engine():
+def engine():
+
+    global total
 
     while True:
 
@@ -233,106 +179,84 @@ def trading_engine():
 
             random.shuffle(pairs)
 
-            found_signal = False
+            for symbol in pairs:
 
-            for pair in pairs:
-
-                signal = generate_signal(pair)
+                signal = generate_signal(symbol)
 
                 if signal:
 
-                    found_signal = True
+                    symbol, direction, arrow, price = signal
 
                     now = datetime.now(india)
 
-                    signal_time = now.strftime("%I:%M:%S %p")
+                    minutes = random.choice([1, 2, 5])
 
-                    entry = now + timedelta(minutes=1)
+                    entry_time = now + timedelta(minutes=1)
+                    expiry_time = entry_time + timedelta(minutes=minutes)
 
-                    expiry_minutes = random.choice([1, 2, 5])
-
-                    expiry = entry + timedelta(minutes=expiry_minutes)
+                    total += 1
 
                     msg = f"""
 ━━━━━━━━━━━━━━
 📢 AI BINARY SIGNAL
 
-📈 Asset : {signal['pair']}
+📈 Asset : {symbol.replace('=X','')}
 
 🕒 Signal Time :
-{signal_time}
+{now.strftime("%I:%M:%S %p")}
 
 ⏰ Entry Time :
-{entry.strftime("%I:%M %p")}
+{entry_time.strftime("%I:%M %p")}
 
 ⌛ Expiry Time :
-{expiry.strftime("%I:%M %p")}
+{expiry_time.strftime("%I:%M %p")}
 
 ⏳ Trade :
-{expiry_minutes} Minute Trade
+{minutes} MIN
 
 📊 Direction :
-{signal['direction']}
+{arrow}
 
 💰 Entry Price :
-{signal['price']}
+{price}
 
-🔥 Accuracy :
-{signal['accuracy']}%
-
-⚡ Strategy :
-EMA + RSI + MACD + Trend Confirmation
+🔥 Strategy :
+EMA + RSI + MACD Trend Engine
 ━━━━━━━━━━━━━━
 """
 
-                    send_message(msg)
+                    send(msg)
 
                     threading.Thread(
-                        target=result_checker,
-                        args=(
-                            signal['pair'],
-                            signal['type'],
-                            signal['price'],
-                            expiry_minutes
-                        )
+                        target=check_result,
+                        args=(symbol, direction, price, minutes)
                     ).start()
 
-                    print("SIGNAL SENT:", signal['pair'])
-
-                    time.sleep(180)
+                    time.sleep(120)
 
                     break
 
-            if not found_signal:
-
-                print("NO STRONG SIGNAL")
-
-                time.sleep(60)
-
-        except Exception as e:
-
-            print("ENGINE ERROR:", e)
-
             time.sleep(30)
 
-# =====================================================
-# FLASK
-# =====================================================
+        except Exception as e:
+            print("ENGINE ERROR:", e)
+            time.sleep(10)
+
+# =========================
+# FLASK SERVER
+# =========================
 
 @app.route("/")
 
 def home():
+    return "BOT RUNNING 24/7"
 
-    return "AI SIGNAL ENGINE RUNNING"
-
-# =====================================================
+# =========================
 # START
-# =====================================================
+# =========================
 
-threading.Thread(target=trading_engine).start()
+threading.Thread(target=engine).start()
 
 if __name__ == "__main__":
-
     port = int(os.environ.get("PORT", 10000))
-
     app.run(host="0.0.0.0", port=port)

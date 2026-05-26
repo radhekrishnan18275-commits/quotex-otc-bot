@@ -5,7 +5,6 @@ from flask import Flask
 from datetime import datetime
 import pytz
 
-# ================= APP =================
 app = Flask(__name__)
 
 # ================= CONFIG =================
@@ -16,73 +15,74 @@ TIMEZONE = pytz.timezone("Asia/Kolkata")
 
 SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
 
-stats = {
-    "win": 0,
-    "loss": 0,
-    "total": 0
-}
+stats = {"win": 0, "loss": 0, "total": 0}
 
 # ================= TELEGRAM =================
 def send(msg):
     try:
+        print("📩 TELEGRAM:", msg)
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=5)
     except Exception as e:
         print("Telegram error:", e)
 
-# ================= REAL MARKET DATA (STOOQ) =================
+# ================= REAL PRICE =================
 def get_price(symbol):
     try:
         sym = symbol.lower()
         url = f"https://stooq.com/q/l/?s={sym}&f=sd2t2ohlc&h&e=json"
         r = requests.get(url, timeout=5).json()
-        data = r["symbols"][0]
-        return float(data["close"])
+        return float(r["symbols"][0]["close"])
     except Exception as e:
-        print("PRICE ERROR:", e)
+        print("PRICE ERROR:", symbol, e)
         return None
 
-# ================= SIGNAL ENGINE (FILTERED TREND) =================
+# ================= SIGNAL ENGINE =================
 def analyze(symbol):
 
     price = get_price(symbol)
+
     if not price:
         return None
 
-    now_min = datetime.now().minute
+    print("📊 PRICE OK:", symbol, price)
+
+    minute = datetime.now().minute
 
     score = 0
 
-    # trend filter (simple but stable)
-    if now_min % 2 == 0:
+    if minute % 2 == 0:
         score += 1
     else:
         score -= 1
 
-    if price > 1.0:
+    if price > 1:
         score += 1
     else:
         score -= 1
+
+    print("📈 SCORE:", symbol, score)
 
     if score >= 2:
-        return "UP", price
+        return "BUY", price
     elif score <= -2:
-        return "DOWN", price
+        return "SELL", price
 
     return None
 
-# ================= RESULT ENGINE =================
+# ================= RESULT CHECK =================
 def check_result(symbol, direction, entry):
 
-    time.sleep(60)  # 1 min expiry
+    time.sleep(60)
 
     exit_price = get_price(symbol)
+
     if not exit_price:
         return
 
     stats["total"] += 1
 
-    if direction == "UP":
+    if direction == "BUY":
         result = "WIN" if exit_price > entry else "LOSS"
     else:
         result = "WIN" if exit_price < entry else "LOSS"
@@ -95,28 +95,34 @@ def check_result(symbol, direction, entry):
     send(f"""
 📊 RESULT
 
-Asset : {symbol}
-Direction : {direction}
+Asset: {symbol}
+Direction: {direction}
 
-Entry : {entry}
-Exit : {exit_price}
+Entry: {entry}
+Exit: {exit_price}
 
-Result : {result}
+Result: {result}
 
-📈 WIN : {stats['win']}
-📉 LOSS : {stats['loss']}
-📊 TOTAL : {stats['total']}
+WIN: {stats['win']}
+LOSS: {stats['loss']}
+TOTAL: {stats['total']}
 """)
 
-# ================= SIGNAL FORMAT (YOUR STYLE) =================
-def signal_loop():
+# ================= SIGNAL LOOP =================
+def loop():
+
+    print("🔁 SIGNAL LOOP STARTED")
 
     while True:
 
         try:
             for symbol in SYMBOLS:
 
+                print("🔍 Checking:", symbol)
+
                 signal = analyze(symbol)
+
+                print("📡 SIGNAL:", symbol, signal)
 
                 if not signal:
                     continue
@@ -125,30 +131,14 @@ def signal_loop():
 
                 now = datetime.now(TIMEZONE)
 
-                signal_time = now.strftime("%I:%M:%S %p")
-                entry_time = (now.minute + 1) % 60
-                expiry_time = (now.minute + 2) % 60
-
                 send(f"""
-🔥 AI BINARY SIGNAL
+🔥 AI SIGNAL
 
-📈 Asset : {symbol}
+Asset: {symbol}
+Time: {now.strftime("%I:%M:%S %p")}
 
-🕒 Signal Time : {signal_time}
-
-⏰ Entry Time : {entry_time} min
-
-⌛ Expiry Time : {expiry_time} min
-
-📊 Direction : {direction} ⬆️
-
-💰 Entry Price : {price}
-
-🔥 Accuracy : HIGH
-
-⚡ Strategy :
-EMA + RSI + MACD + Trend Confirmation
-━━━━━━━━━━━━━━
+Direction: {direction}
+Price: {price}
 """)
 
                 threading.Thread(
@@ -161,26 +151,21 @@ EMA + RSI + MACD + Trend Confirmation
             time.sleep(20)
 
         except Exception as e:
-            print("Loop error:", e)
-            time.sleep(5)
+            print("LOOP ERROR:", e)
 
 # ================= DASHBOARD =================
 @app.route("/")
 def home():
-    return f"""
-    <h2>🚀 AI SIGNAL BOT LIVE</h2>
-    <p>WIN : {stats['win']}</p>
-    <p>LOSS : {stats['loss']}</p>
-    <p>TOTAL : {stats['total']}</p>
-    """
+    return "BOT RUNNING OK"
 
 # ================= START =================
 if __name__ == "__main__":
 
     send("🚀 BOT STARTED SUCCESSFULLY")
 
-    t = threading.Thread(target=signal_loop)
-    t.daemon = True
+    t = threading.Thread(target=loop, daemon=True)
     t.start()
+
+    print("🚀 MAIN THREAD RUNNING")
 
     app.run(host="0.0.0.0", port=10000)

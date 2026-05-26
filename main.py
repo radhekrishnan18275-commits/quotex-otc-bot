@@ -8,44 +8,42 @@ import random
 
 app = Flask(__name__)
 
-# =========================
+# ==================================
 # TELEGRAM SETTINGS
-# =========================
+# ==================================
 
 BOT_TOKEN = "YOUR_BOT_TOKEN"
 CHAT_ID = "YOUR_CHAT_ID"
 
-# =========================
-# INDIA TIME
-# =========================
+# ==================================
+# INDIA TIMEZONE
+# ==================================
 
 IST = pytz.timezone("Asia/Kolkata")
 
-# =========================
+# ==================================
 # PAIRS
-# =========================
+# ==================================
 
 pairs = [
     "EURUSD",
     "GBPUSD",
     "AUDUSD",
     "USDJPY",
-    "USDCAD",
-    "EURJPY",
-    "GBPJPY"
+    "USDCAD"
 ]
 
-# =========================
+# ==================================
 # SUMMARY
-# =========================
+# ==================================
 
 total_signals = 0
 wins = 0
 losses = 0
 
-# =========================
-# TELEGRAM FUNCTION
-# =========================
+# ==================================
+# SEND TELEGRAM MESSAGE
+# ==================================
 
 def send_telegram(message):
 
@@ -57,23 +55,27 @@ def send_telegram(message):
     }
 
     try:
-        requests.post(url, data=data)
-        print("TELEGRAM SENT")
+
+        response = requests.post(url, data=data)
+
+        print("TELEGRAM STATUS:", response.status_code)
+        print("TELEGRAM RESPONSE:", response.text)
 
     except Exception as e:
-        print("ERROR:", e)
 
-# =========================
-# FAKE LIVE PRICE
-# =========================
+        print("TELEGRAM ERROR:", e)
+
+# ==================================
+# RANDOM LIVE PRICE
+# ==================================
 
 def get_price():
 
     return round(random.uniform(1.1000, 1.5000), 4)
 
-# =========================
+# ==================================
 # SIGNAL ENGINE
-# =========================
+# ==================================
 
 def signal_engine():
 
@@ -93,42 +95,38 @@ def signal_engine():
         ])
 
         trade_type = random.choice([
-            "1 MINUTE",
-            "2 MINUTE",
-            "5 MINUTE"
+            "1 MIN",
+            "2 MIN",
+            "5 MIN"
         ])
-
-        # =========================
-        # EXPIRY LOGIC
-        # =========================
 
         expiry_minutes = 1
 
-        if trade_type == "2 MINUTE":
+        if trade_type == "2 MIN":
             expiry_minutes = 2
 
-        if trade_type == "5 MINUTE":
+        if trade_type == "5 MIN":
             expiry_minutes = 5
 
         now = datetime.now(IST)
 
         signal_time = now.strftime("%I:%M:%S %p")
 
-        entry_time_obj = now + timedelta(minutes=1)
+        entry_obj = now + timedelta(minutes=1)
 
-        expiry_time_obj = entry_time_obj + timedelta(
+        expiry_obj = entry_obj + timedelta(
             minutes=expiry_minutes
         )
 
-        entry_time = entry_time_obj.strftime("%I:%M %p")
+        entry_time = entry_obj.strftime("%I:%M %p")
 
-        expiry_time = expiry_time_obj.strftime("%I:%M %p")
+        expiry_time = expiry_obj.strftime("%I:%M %p")
 
         entry_price = get_price()
 
-        # =========================
+        # ==================================
         # SIGNAL MESSAGE
-        # =========================
+        # ==================================
 
         signal_message = f"""
 ━━━━━━━━━━━━━━━━━━
@@ -146,7 +144,7 @@ def signal_engine():
 ⌛ Expiry Time :
 {expiry_time}
 
-⏳ Trade Type :
+⏳ Trade :
 {trade_type}
 
 📊 Direction :
@@ -166,21 +164,17 @@ EMA + RSI + MACD + Trend Confirmation
 
         send_telegram(signal_message)
 
-        total_signals += 1
-
         print("SIGNAL SENT")
 
-        # =========================
-        # WAIT UNTIL EXPIRY
-        # =========================
+        total_signals += 1
 
-        total_wait = (1 + expiry_minutes) * 60
+        # ==================================
+        # WAIT FOR RESULT
+        # ==================================
 
-        time.sleep(total_wait)
+        wait_time = (1 + expiry_minutes) * 60
 
-        # =========================
-        # RESULT
-        # =========================
+        time.sleep(wait_time)
 
         exit_price = get_price()
 
@@ -202,9 +196,9 @@ EMA + RSI + MACD + Trend Confirmation
             else:
                 losses += 1
 
-        # =========================
+        # ==================================
         # RESULT MESSAGE
-        # =========================
+        # ==================================
 
         result_message = f"""
 ━━━━━━━━━━━━━━━━━━
@@ -213,7 +207,7 @@ EMA + RSI + MACD + Trend Confirmation
 
 📈 Asset : {pair}
 
-⏳ Trade Type :
+⏳ Trade :
 {trade_type}
 
 📊 Direction :
@@ -225,20 +219,20 @@ EMA + RSI + MACD + Trend Confirmation
 💵 Exit Price :
 {exit_price}
 
-🏆 Final Result :
+🏆 Result :
 {result}
 
 ━━━━━━━━━━━━━━━━━━
-📊 24 HOURS SUMMARY
+📊 SUMMARY
 ━━━━━━━━━━━━━━━━━━
 
-✅ Total Signals :
+✅ Total :
 {total_signals}
 
 🏆 Wins :
 {wins}
 
-❌ Losses :
+❌ Loss :
 {losses}
 
 ━━━━━━━━━━━━━━━━━━
@@ -248,30 +242,26 @@ EMA + RSI + MACD + Trend Confirmation
 
         print("RESULT SENT")
 
-        # =========================
-        # NEXT SIGNAL WAIT
-        # =========================
+        time.sleep(20)
 
-        time.sleep(30)
-
-# =========================
-# HOME ROUTE
-# =========================
+# ==================================
+# HOME PAGE
+# ==================================
 
 @app.route("/")
 def home():
 
-    return "AI SIGNAL BOT RUNNING"
+    return "BOT RUNNING"
 
-# =========================
-# START THREAD
-# =========================
+# ==================================
+# START BOT
+# ==================================
 
 threading.Thread(target=signal_engine).start()
 
-# =========================
+# ==================================
 # RUN APP
-# =========================
+# ==================================
 
 if __name__ == "__main__":
 

@@ -31,19 +31,25 @@ async def send_telegram_message(message):
 
 def get_live_price(symbol):
 
-    pair = symbol.replace("/", "") + "=X"
-
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}"
-
     try:
-        response = requests.get(url).json()
 
-        price = response["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        pair = symbol.replace("/", "")
 
-        return float(price)
+        url = f"https://financialmodelingprep.com/api/v3/quote/{pair}USD?apikey=demo"
 
-    except:
-        return None
+        response = requests.get(url)
+
+        data = response.json()
+
+        if len(data) > 0:
+
+            return float(data[0]["price"])
+
+    except Exception as e:
+
+        print("PRICE ERROR:", e)
+
+    return None
 
 # =========================================
 # CHECK RESULT

@@ -1,7 +1,7 @@
 import os
 import asyncio
-import time
 import requests
+import yfinance as yf
 
 from datetime import datetime, timedelta
 from flask import Flask, request
@@ -23,10 +23,14 @@ app = Flask(__name__)
 # =========================================
 
 async def send_telegram_message(message):
-    await bot.send_message(chat_id=CHAT_ID, text=message)
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=message
+    )
 
 # =========================================
-# GET LIVE PRICE
+# GET LIVE FOREX PRICE
 # =========================================
 
 def get_live_price(symbol):
@@ -35,19 +39,33 @@ def get_live_price(symbol):
 
         pair = symbol.replace("/", "")
 
-        url = f"https://financialmodelingprep.com/api/v3/quote/{pair}USD?apikey=demo"
+        forex_map = {
+            "EURUSD": "EURUSD=X",
+            "GBPUSD": "GBPUSD=X",
+            "AUDUSD": "AUDUSD=X",
+            "USDJPY": "JPY=X",
+            "USDCHF": "CHF=X",
+            "USDCAD": "CAD=X"
+        }
 
-        response = requests.get(url)
+        ticker = forex_map.get(pair, "EURUSD=X")
 
-        data = response.json()
+        data = yf.Ticker(ticker)
 
-        if len(data) > 0:
+        candles = data.history(
+            period="1d",
+            interval="1m"
+        )
 
-            return float(data[0]["price"])
+        if not candles.empty:
+
+            price = candles["Close"].iloc[-1]
+
+            return float(price)
 
     except Exception as e:
 
-        print("PRICE ERROR:", e)
+        print("PRICE FETCH ERROR:", e)
 
     return None
 
@@ -55,21 +73,22 @@ def get_live_price(symbol):
 # CHECK RESULT
 # =========================================
 
-def check_trade_result(symbol, direction, entry_price):
+def check_trade_result(symbol, signal, entry_price):
 
     final_price = get_live_price(symbol)
 
     if final_price is None:
+
         return "UNKNOWN"
 
-    if direction == "BUY":
+    if signal == "BUY":
 
         if final_price > entry_price:
             return "WIN"
         else:
             return "LOSS"
 
-    if direction == "SELL":
+    if signal == "SELL":
 
         if final_price < entry_price:
             return "WIN"
@@ -82,20 +101,30 @@ def check_trade_result(symbol, direction, entry_price):
 # RESULT ENGINE
 # =========================================
 
-async def result_engine(symbol, direction, entry_price, expiry_minutes):
+async def result_engine(
+    symbol,
+    signal,
+    entry_price,
+    expiry_minutes
+):
 
     await asyncio.sleep(expiry_minutes * 60)
 
-    result = check_trade_result(symbol, direction, entry_price)
+    result = check_trade_result(
+        symbol,
+        signal,
+        entry_price
+    )
 
     if result == "WIN":
 
-        msg = f"""
+        result_message = f"""
 ━━━━━━━━━━━━━━
 ✅ RESULT : WIN
 
 📈 Asset : {symbol}
-🔥 Direction : {direction}
+
+🔥 Direction : {signal}
 
 💰 Profit Trade
 ━━━━━━━━━━━━━━
@@ -103,16 +132,17 @@ async def result_engine(symbol, direction, entry_price, expiry_minutes):
 
     else:
 
-        msg = f"""
+        result_message = f"""
 ━━━━━━━━━━━━━━
 ❌ RESULT : LOSS
 
 📉 Asset : {symbol}
+
 ⚠ Market Reversed
 ━━━━━━━━━━━━━━
 """
 
-    await send_telegram_message(msg)
+    await send_telegram_message(result_message)
 
 # =========================================
 # HOME
@@ -120,6 +150,7 @@ async def result_engine(symbol, direction, entry_price, expiry_minutes):
 
 @app.route("/")
 def home():
+
     return "AI Binary Bot Running 🚀"
 
 # =========================================
@@ -134,20 +165,30 @@ def webhook():
         data = request.json
 
         signal = data.get("signal", "BUY")
-        symbol = data.get("symbol", "AUDUSD")
+
+        symbol = data.get("symbol", "EURUSD")
+
         expiry = int(data.get("expiry", 1))
 
-        direction = "UP ⬆️" if signal == "BUY" else "DOWN ⬇️"
+        direction = (
+            "UP ⬆️"
+            if signal == "BUY"
+            else "DOWN ⬇️"
+        )
 
         now = datetime.now()
 
         entry_time = now + timedelta(minutes=1)
 
-        expiry_time = entry_time + timedelta(minutes=expiry)
+        expiry_time = (
+            entry_time +
+            timedelta(minutes=expiry)
+        )
 
         entry_price = get_live_price(symbol)
 
         if entry_price is None:
+
             return "PRICE ERROR", 500
 
         message = f"""
@@ -156,13 +197,17 @@ def webhook():
 
 Asset : {symbol}
 
-🕒 Signal Time : {now.strftime('%I:%M:%S %p')}
+🕒 Signal Time :
+{now.strftime('%I:%M:%S %p')}
 
-⏰ Entry Time : {entry_time.strftime('%I:%M %p')}
+⏰ Entry Time :
+{entry_time.strftime('%I:%M %p')}
 
-⌛ Expiry Time : {expiry_time.strftime('%I:%M %p')}
+⌛ Expiry Time :
+{expiry_time.strftime('%I:%M %p')}
 
-📈 Direction : {direction}
+📈 Direction :
+{direction}
 
 🔥 Accuracy : HIGH
 
@@ -171,7 +216,9 @@ EMA + RSI + MACD + Trend Confirmation
 ━━━━━━━━━━━━━━
 """
 
-        asyncio.run(send_telegram_message(message))
+        asyncio.run(
+            send_telegram_message(message)
+        )
 
         asyncio.run(
             result_engine(
@@ -186,7 +233,7 @@ EMA + RSI + MACD + Trend Confirmation
 
     except Exception as e:
 
-        print("ERROR:", e)
+        print("WEBHOOK ERROR:", e)
 
         return "ERROR", 500
 
@@ -196,6 +243,11 @@ EMA + RSI + MACD + Trend Confirmation
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 10000))
+    port = int(
+        os.environ.get("PORT", 10000)
+    )
 
-    app.run(host="0.0.0.0", port=port)
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )

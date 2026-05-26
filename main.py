@@ -1,14 +1,22 @@
 import os
 import asyncio
 import threading
+import time
 
 from datetime import datetime, timedelta
+import pytz
 
 from flask import Flask, request
 from telegram import Bot
 
 # =====================================
-# SETTINGS
+# INDIA TIMEZONE
+# =====================================
+
+india = pytz.timezone("Asia/Kolkata")
+
+# =====================================
+# TELEGRAM SETTINGS
 # =====================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -16,10 +24,14 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=BOT_TOKEN)
 
+# =====================================
+# FLASK APP
+# =====================================
+
 app = Flask(__name__)
 
 # =====================================
-# DEMO PRICE ENGINE
+# DEMO LIVE PRICE
 # =====================================
 
 def get_live_price(symbol):
@@ -38,67 +50,63 @@ def get_live_price(symbol):
     return prices.get(symbol, 1.0000)
 
 # =====================================
-# TELEGRAM MESSAGE
+# SEND TELEGRAM MESSAGE
 # =====================================
 
-async def send_message(text):
+async def telegram_message(message):
 
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text=text
-    )
+    try:
+
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=message
+        )
+
+        print("TELEGRAM SENT")
+
+    except Exception as e:
+
+        print("TELEGRAM ERROR:", e)
 
 # =====================================
 # RESULT ENGINE
 # =====================================
 
-def run_result_engine(
+def result_engine(
     symbol,
     signal,
     entry_price,
     expiry
 ):
 
-    asyncio.run(
-        result_engine(
-            symbol,
-            signal,
-            entry_price,
-            expiry
-        )
-    )
+    try:
 
-async def result_engine(
-    symbol,
-    signal,
-    entry_price,
-    expiry
-):
+        print("RESULT ENGINE STARTED")
 
-    # WAIT
-    await asyncio.sleep(expiry * 60)
+        # WAIT FOR EXPIRY
+        time.sleep(expiry * 60)
 
-    final_price = get_live_price(symbol)
+        final_price = get_live_price(symbol)
 
-    # RESULT
-    if signal == "BUY":
+        # RESULT LOGIC
+        if signal == "BUY":
 
-        if final_price >= entry_price:
-            result = "WIN"
+            if final_price >= entry_price:
+                result = "WIN"
+            else:
+                result = "LOSS"
+
         else:
-            result = "LOSS"
 
-    else:
+            if final_price <= entry_price:
+                result = "WIN"
+            else:
+                result = "LOSS"
 
-        if final_price <= entry_price:
-            result = "WIN"
-        else:
-            result = "LOSS"
+        # RESULT MESSAGE
+        if result == "WIN":
 
-    # RESULT MESSAGE
-    if result == "WIN":
-
-        msg = f"""
+            result_msg = f"""
 ━━━━━━━━━━━━━━
 ✅ RESULT : WIN
 
@@ -110,9 +118,9 @@ async def result_engine(
 ━━━━━━━━━━━━━━
 """
 
-    else:
+        else:
 
-        msg = f"""
+            result_msg = f"""
 ━━━━━━━━━━━━━━
 ❌ RESULT : LOSS
 
@@ -122,7 +130,15 @@ async def result_engine(
 ━━━━━━━━━━━━━━
 """
 
-    await send_message(msg)
+        asyncio.run(
+            telegram_message(result_msg)
+        )
+
+        print("RESULT SENT")
+
+    except Exception as e:
+
+        print("RESULT ENGINE ERROR:", e)
 
 # =====================================
 # HOME
@@ -156,7 +172,8 @@ def webhook():
             else "DOWN ⬇️"
         )
 
-        now = datetime.now()
+        # INDIA TIME
+        now = datetime.now(india)
 
         entry_time = now + timedelta(minutes=1)
 
@@ -165,6 +182,7 @@ def webhook():
             timedelta(minutes=expiry)
         )
 
+        # ENTRY PRICE
         entry_price = get_live_price(symbol)
 
         # SIGNAL MESSAGE
@@ -172,7 +190,7 @@ def webhook():
 ━━━━━━━━━━━━━━
 📊 AI OTC SIGNAL
 
-Asset : {symbol}
+📈 Asset : {symbol}
 
 🕒 Signal Time :
 {now.strftime('%I:%M:%S %p')}
@@ -183,7 +201,7 @@ Asset : {symbol}
 ⌛ Expiry Time :
 {expiry_time.strftime('%I:%M %p')}
 
-📈 Direction :
+📊 Direction :
 {direction}
 
 🔥 Accuracy : HIGH
@@ -195,12 +213,12 @@ EMA + RSI + MACD + Trend Confirmation
 
         # SEND SIGNAL
         asyncio.run(
-            send_message(signal_msg)
+            telegram_message(signal_msg)
         )
 
-        # START RESULT THREAD
+        # START RESULT ENGINE
         thread = threading.Thread(
-            target=run_result_engine,
+            target=result_engine,
             args=(
                 symbol,
                 signal,
@@ -211,11 +229,13 @@ EMA + RSI + MACD + Trend Confirmation
 
         thread.start()
 
+        print("THREAD STARTED")
+
         return "OK", 200
 
     except Exception as e:
 
-        print("ERROR:", e)
+        print("WEBHOOK ERROR:", e)
 
         return "ERROR", 500
 

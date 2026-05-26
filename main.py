@@ -1,39 +1,34 @@
 import os
-import asyncio
-import threading
 import time
 import random
+import threading
 import requests
 
+from flask import Flask
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask
-from telegram import Bot
-
-# ====================================
+# =========================================
 # INDIA TIME
-# ====================================
+# =========================================
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# ====================================
+# =========================================
 # TELEGRAM
-# ====================================
+# =========================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-bot = Bot(token=BOT_TOKEN)
-
-# ====================================
+# =========================================
 # FLASK
-# ====================================
+# =========================================
 
 app = Flask(__name__)
 
-# ====================================
-# PAIRS
-# ====================================
+# =========================================
+# FOREX PAIRS
+# =========================================
 
 pairs = [
     "EURUSD",
@@ -46,36 +41,32 @@ pairs = [
     "GBPJPY"
 ]
 
-# ====================================
-# STATS
-# ====================================
-
-total_trades = 0
-total_win = 0
-total_loss = 0
-
-# ====================================
+# =========================================
 # TELEGRAM SEND
-# ====================================
+# =========================================
 
-async def send_telegram(message):
+def send_telegram(message):
 
     try:
 
-        await bot.send_message(
-            chat_id=CHAT_ID,
-            text=message
-        )
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-        print("MESSAGE SENT")
+        data = {
+            "chat_id": CHAT_ID,
+            "text": message
+        }
+
+        r = requests.post(url, data=data)
+
+        print("TELEGRAM RESPONSE:", r.text)
 
     except Exception as e:
 
         print("TELEGRAM ERROR:", e)
 
-# ====================================
+# =========================================
 # LIVE PRICE
-# ====================================
+# =========================================
 
 def get_live_price(symbol):
 
@@ -103,94 +94,54 @@ def get_live_price(symbol):
 
         return None
 
-# ====================================
-# RESULT CHECK
-# ====================================
+# =========================================
+# CHECK RESULT
+# =========================================
 
 def check_result(symbol, direction, entry_price):
-
-    global total_win
-    global total_loss
 
     try:
 
         exit_price = get_live_price(symbol)
 
         if exit_price is None:
-
             return
 
         if direction == "BUY":
 
-            result = (
-                "WIN"
-                if exit_price > entry_price
-                else "LOSS"
-            )
+            result = "WIN" if exit_price > entry_price else "LOSS"
 
         else:
 
-            result = (
-                "WIN"
-                if exit_price < entry_price
-                else "LOSS"
-            )
+            result = "WIN" if exit_price < entry_price else "LOSS"
 
-        if result == "WIN":
-
-            total_win += 1
-
-            msg = f"""
+        msg = f"""
 ━━━━━━━━━━━━━━
-✅ RESULT : WIN
+📊 RESULT
 
 📈 Asset : {symbol}
 
-💰 Entry Price :
-{entry_price}
+📊 Direction : {direction}
 
-💰 Exit Price :
-{exit_price}
+💰 Entry Price : {entry_price}
 
-🔥 Candle Confirmed
+💰 Exit Price : {exit_price}
+
+🔥 RESULT : {result}
 ━━━━━━━━━━━━━━
 """
 
-        else:
-
-            total_loss += 1
-
-            msg = f"""
-━━━━━━━━━━━━━━
-❌ RESULT : LOSS
-
-📈 Asset : {symbol}
-
-💰 Entry Price :
-{entry_price}
-
-💰 Exit Price :
-{exit_price}
-
-⚠ Candle Reversed
-━━━━━━━━━━━━━━
-"""
-
-        asyncio.run(send_telegram(msg))
-
-        print("RESULT SENT")
+        send_telegram(msg)
 
     except Exception as e:
 
         print("RESULT ERROR:", e)
 
-# ====================================
+# =========================================
 # SIGNAL ENGINE
-# ====================================
+# =========================================
 
 def signal_engine():
-
-    global total_trades
 
     while True:
 
@@ -213,26 +164,18 @@ def signal_engine():
 
             entry_time = now + timedelta(minutes=1)
 
-            expiry_time = (
-                entry_time +
-                timedelta(minutes=expiry)
-            )
+            expiry_time = entry_time + timedelta(minutes=expiry)
 
             entry_price = get_live_price(symbol)
 
             if entry_price is None:
 
                 time.sleep(10)
-
                 continue
 
-            arrow = (
-                "UP ⬆️"
-                if direction == "BUY"
-                else "DOWN ⬇️"
-            )
+            arrow = "UP ⬆️" if direction == "BUY" else "DOWN ⬇️"
 
-            signal_message = f"""
+            signal = f"""
 ━━━━━━━━━━━━━━
 📊 AI BINARY SIGNAL
 
@@ -260,27 +203,28 @@ EMA + RSI + MACD + Trend Confirmation
 ━━━━━━━━━━━━━━
 """
 
-            asyncio.run(
-                send_telegram(signal_message)
-            )
+            print("SENDING SIGNAL...")
 
-            total_trades += 1
+            send_telegram(signal)
 
-            print("SIGNAL SENT")
+            # WAIT ENTRY + EXPIRY
 
-            # WAIT
             total_wait = 60 + (expiry * 60)
+
+            print("WAITING:", total_wait)
 
             time.sleep(total_wait)
 
-            # CHECK REAL RESULT
+            # CHECK RESULT
+
             check_result(
                 symbol,
                 direction,
                 entry_price
             )
 
-            # NEXT SIGNAL DELAY
+            # NEXT SIGNAL
+
             time.sleep(20)
 
         except Exception as e:
@@ -289,105 +233,31 @@ EMA + RSI + MACD + Trend Confirmation
 
             time.sleep(5)
 
-# ====================================
-# DAILY SUMMARY
-# ====================================
-
-def daily_summary():
-
-    global total_trades
-    global total_win
-    global total_loss
-
-    sent_today = False
-
-    while True:
-
-        try:
-
-            now = datetime.now(IST)
-
-            if (
-                now.hour == 23 and
-                now.minute == 59 and
-                not sent_today
-            ):
-
-                accuracy = 0
-
-                if total_trades > 0:
-
-                    accuracy = round(
-                        (total_win / total_trades) * 100,
-                        2
-                    )
-
-                msg = f"""
-━━━━━━━━━━━━━━
-📊 DAILY SUMMARY
-
-📈 Total Signals :
-{total_trades}
-
-✅ WIN :
-{total_win}
-
-❌ LOSS :
-{total_loss}
-
-🔥 Accuracy :
-{accuracy}%
-━━━━━━━━━━━━━━
-"""
-
-                asyncio.run(send_telegram(msg))
-
-                sent_today = True
-
-            if now.hour == 0 and now.minute == 1:
-
-                sent_today = False
-
-            time.sleep(30)
-
-        except Exception as e:
-
-            print("SUMMARY ERROR:", e)
-
-            time.sleep(5)
-
-# ====================================
+# =========================================
 # HOME
-# ====================================
+# =========================================
 
 @app.route("/")
 def home():
 
-    return "AI BOT RUNNING"
+    return "BOT RUNNING"
 
-# ====================================
-# START THREADS
-# ====================================
+# =========================================
+# START ENGINE
+# =========================================
 
 threading.Thread(
     target=signal_engine,
     daemon=True
 ).start()
 
-threading.Thread(
-    target=daily_summary,
-    daemon=True
-).start()
-
-# ====================================
-# RUN
-# ====================================
+# =========================================
+# RUN SERVER
+# =========================================
 
 if __name__ == "__main__":
 
-    port = int(
-        os.environ.get("PORT", 10000)
-    )
+    port = int(os.environ.get("PORT", 10000))
 
     app.run(
         host="0.0.0.0",

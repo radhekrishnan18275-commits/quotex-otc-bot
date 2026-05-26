@@ -1,3 +1,8 @@
 flask
 requests
 pytz
+pandas
+numpy
+scikit-learn
+ta
+sqlite3

@@ -12,8 +12,8 @@ app = Flask(__name__)
 # TELEGRAM SETTINGS
 # ==================================
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+BOT_TOKEN = "8954212814:AAHGIp4mxbKbFHn70uulbXGRNcy1ROJhCm0"
+CHAT_ID = "8241640506"
 
 # ==================================
 # INDIA TIMEZONE

@@ -1,9 +1,8 @@
 import os
 import time
 import requests
-from datetime import datetime, timedelta
-
 import numpy as np
+from datetime import datetime, timedelta
 
 # =========================
 # CONFIG
@@ -11,103 +10,104 @@ import numpy as np
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-COOLDOWN_SECONDS = 60
+DERIV_APP_ID = "1089"  # public demo app id
+SYMBOL = "R_100"       # Volatility index (fast OTC-like movement)
 
-last_signal_time = 0
+COOLDOWN = 60
+last_signal = 0
+
 
 # =========================
-# SIMPLE MARKET SIMULATION
-# (Replace with real broker API later)
+# GET LIVE CANDLES (DERIV)
 # =========================
-def get_market_data(asset="USDJPY"):
-    # Fake candles for demo (replace with Quotex/MT5 data feed)
-    closes = np.random.normal(1.0900, 0.0010, 50)
-    return closes
+def get_candles(count=50):
+
+    url = f"https://api.deriv.com/api/v2/ohlc?symbol={SYMBOL}&granularity=60&count={count}"
+
+    r = requests.get(url)
+    data = r.json()
+
+    candles = data.get("candles", [])
+
+    closes = [float(c["close"]) for c in candles if "close" in c]
+
+    return np.array(closes)
 
 
 # =========================
 # INDICATORS
 # =========================
-def ema(data, period=10):
-    weights = np.exp(np.linspace(-1., 0., period))
+def ema(data, period):
+    weights = np.exp(np.linspace(-1, 0, period))
     weights /= weights.sum()
-    return np.convolve(data, weights, mode='valid')[-1]
+    return np.convolve(data, weights, mode="valid")[-1]
 
 
 def rsi(data, period=14):
     diff = np.diff(data)
-    gain = np.maximum(diff, 0).mean()
-    loss = -np.minimum(diff, 0).mean()
+    gain = np.mean(np.where(diff > 0, diff, 0))
+    loss = np.mean(np.where(diff < 0, -diff, 0))
+
     rs = gain / (loss + 1e-6)
     return 100 - (100 / (1 + rs))
 
 
 # =========================
-# AI SIGNAL ENGINE
+# AI ENGINE (PRO)
 # =========================
-def analyze_market(data):
+def analyze(data):
 
-    ema_fast = ema(data[-20:], 5)
-    ema_slow = ema(data[-20:], 10)
-    rsi_val = rsi(data[-20:])
-
+    ema_fast = ema(data[-30:], 5)
+    ema_slow = ema(data[-30:], 12)
+    rsi_val = rsi(data[-30:])
     macd = ema_fast - ema_slow
 
     score = 0
 
-    # Trend logic
+    # Trend
     if ema_fast > ema_slow:
-        score += 1
+        score += 2
     else:
-        score -= 1
+        score -= 2
 
-    # RSI logic
+    # RSI
     if rsi_val < 30:
-        score += 1
+        score += 2
     elif rsi_val > 70:
-        score -= 1
+        score -= 2
 
-    # MACD logic
+    # MACD
     if macd > 0:
         score += 1
     else:
         score -= 1
 
-    if score >= 2:
-        return "BUY", 0.85
-    elif score <= -2:
-        return "SELL", 0.85
-    else:
-        return None, 0.40
+    if score >= 3:
+        return "BUY", 0.90
+    elif score <= -3:
+        return "SELL", 0.90
+
+    return None, 0.0
 
 
 # =========================
 # FORMAT SIGNAL
 # =========================
-def format_signal(asset, direction, price, expiry):
+def format_signal(asset, direction, price, expiry, confidence):
 
     now = datetime.now()
-
-    entry_time = now + timedelta(minutes=1)
-    expiry_time = now + timedelta(minutes=expiry)
 
     arrow = "⬆️" if direction == "BUY" else "⬇️"
 
     return f"""
 ━━━━━━━━━━━━━━━━━━
-🔥 AI SMART SIGNAL BOT 🔥
+🔥 PRO AI SIGNAL BOT 🔥
 ━━━━━━━━━━━━━━━━━━
 
 📈 Asset : {asset}
 
-🕒 Signal Time :
+🕒 Time :
 {now.strftime('%I:%M:%S %p')}
-
-⏰ Entry Time :
-{entry_time.strftime('%I:%M %p')}
-
-⌛ Expiry Time :
-{expiry_time.strftime('%I:%M %p')}
 
 ⏳ Trade :
 {expiry} MIN
@@ -115,14 +115,14 @@ def format_signal(asset, direction, price, expiry):
 📊 Direction :
 {direction} {arrow}
 
-💰 Entry Price :
+💰 Price :
 {round(price, 5)}
 
-🔥 Confidence :
-HIGH
+🎯 Confidence :
+{int(confidence*100)}%
 
-⚡ AI Engine :
-EMA + RSI + MACD Fusion
+⚡ Engine :
+EMA + RSI + MACD (Live Market)
 
 ━━━━━━━━━━━━━━━━━━
 """
@@ -137,47 +137,47 @@ def send(msg):
 
 
 # =========================
-# BOT LOOP
+# MAIN LOOP
 # =========================
 def run():
 
-    global last_signal_time
+    global last_signal
 
-    print("🚀 AI SMART SIGNAL BOT STARTED")
+    print("🚀 PRO AI BOT STARTED (LIVE MARKET)")
 
     while True:
 
         try:
             now = time.time()
 
-            # cooldown to avoid spam
-            if now - last_signal_time < COOLDOWN_SECONDS:
+            if now - last_signal < COOLDOWN:
                 time.sleep(5)
                 continue
 
-            data = get_market_data()
+            data = get_candles()
 
-            direction, confidence = analyze_market(data)
-
-            if direction is None:
-                print("NO TRADE - LOW CONFIDENCE")
+            if len(data) < 30:
                 time.sleep(5)
                 continue
+
+            direction, confidence = analyze(data)
 
             price = data[-1]
 
-            # only HIGH quality signals
-            if confidence >= 0.80:
+            if direction and confidence >= 0.85:
 
                 for expiry in [1, 2, 5]:
 
-                    msg = format_signal("USDJPY", direction, price, expiry)
+                    msg = format_signal("LIVE MARKET", direction, price, expiry, confidence)
                     print(msg)
                     send(msg)
 
                     time.sleep(1)
 
-                last_signal_time = now
+                last_signal = now
+
+            else:
+                print("NO TRADE - LOW QUALITY SETUP")
 
             time.sleep(10)
 

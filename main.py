@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 
 from datetime import datetime, timedelta
 
@@ -7,7 +8,7 @@ from flask import Flask, request
 from telegram import Bot
 
 # =====================================
-# TELEGRAM SETTINGS
+# SETTINGS
 # =====================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -15,19 +16,15 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=BOT_TOKEN)
 
-# =====================================
-# FLASK APP
-# =====================================
-
 app = Flask(__name__)
 
 # =====================================
-# DEMO LIVE PRICE
+# DEMO PRICE ENGINE
 # =====================================
 
 def get_live_price(symbol):
 
-    forex_prices = {
+    prices = {
 
         "EURUSD": 1.0850,
         "GBPUSD": 1.2740,
@@ -38,10 +35,10 @@ def get_live_price(symbol):
 
     }
 
-    return forex_prices.get(symbol, 1.0000)
+    return prices.get(symbol, 1.0000)
 
 # =====================================
-# SEND TELEGRAM MESSAGE
+# TELEGRAM MESSAGE
 # =====================================
 
 async def send_message(text):
@@ -55,6 +52,22 @@ async def send_message(text):
 # RESULT ENGINE
 # =====================================
 
+def run_result_engine(
+    symbol,
+    signal,
+    entry_price,
+    expiry
+):
+
+    asyncio.run(
+        result_engine(
+            symbol,
+            signal,
+            entry_price,
+            expiry
+        )
+    )
+
 async def result_engine(
     symbol,
     signal,
@@ -62,12 +75,12 @@ async def result_engine(
     expiry
 ):
 
-    # WAIT FOR EXPIRY
+    # WAIT
     await asyncio.sleep(expiry * 60)
 
     final_price = get_live_price(symbol)
 
-    # RESULT LOGIC
+    # RESULT
     if signal == "BUY":
 
         if final_price >= entry_price:
@@ -112,16 +125,16 @@ async def result_engine(
     await send_message(msg)
 
 # =====================================
-# HOME ROUTE
+# HOME
 # =====================================
 
 @app.route("/")
 def home():
 
-    return "AI Binary Bot Running 🚀"
+    return "AI Trading Bot Running 🚀"
 
 # =====================================
-# WEBHOOK ROUTE
+# WEBHOOK
 # =====================================
 
 @app.route("/webhook", methods=["POST"])
@@ -129,7 +142,6 @@ def webhook():
 
     try:
 
-        # RECEIVE JSON
         data = request.json
 
         signal = data.get("signal", "BUY")
@@ -138,14 +150,12 @@ def webhook():
 
         expiry = int(data.get("expiry", 1))
 
-        # DIRECTION
         direction = (
             "UP ⬆️"
             if signal == "BUY"
             else "DOWN ⬇️"
         )
 
-        # TIMES
         now = datetime.now()
 
         entry_time = now + timedelta(minutes=1)
@@ -155,11 +165,10 @@ def webhook():
             timedelta(minutes=expiry)
         )
 
-        # GET ENTRY PRICE
         entry_price = get_live_price(symbol)
 
         # SIGNAL MESSAGE
-        signal_message = f"""
+        signal_msg = f"""
 ━━━━━━━━━━━━━━
 📊 AI OTC SIGNAL
 
@@ -186,18 +195,21 @@ EMA + RSI + MACD + Trend Confirmation
 
         # SEND SIGNAL
         asyncio.run(
-            send_message(signal_message)
+            send_message(signal_msg)
         )
 
-        # START RESULT ENGINE
-        asyncio.run(
-            result_engine(
+        # START RESULT THREAD
+        thread = threading.Thread(
+            target=run_result_engine,
+            args=(
                 symbol,
                 signal,
                 entry_price,
                 expiry
             )
         )
+
+        thread.start()
 
         return "OK", 200
 

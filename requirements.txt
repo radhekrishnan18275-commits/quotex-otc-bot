@@ -1,8 +1,6 @@
 flask
 requests
-pytz
-yfinance
 pandas
-numpy
+yfinance
 ta
-python-telegram-bot
+pytz

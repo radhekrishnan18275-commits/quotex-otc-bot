@@ -1,39 +1,101 @@
 import os
 import time
-from datetime import datetime, timedelta
 import requests
+from datetime import datetime, timedelta
+
+import numpy as np
 
 # =========================
-# CONFIG (USE ENV VARS)
+# CONFIG
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Telegram send function
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    requests.post(url, data=payload)
+COOLDOWN_SECONDS = 60
+
+last_signal_time = 0
+
+# =========================
+# SIMPLE MARKET SIMULATION
+# (Replace with real broker API later)
+# =========================
+def get_market_data(asset="USDJPY"):
+    # Fake candles for demo (replace with Quotex/MT5 data feed)
+    closes = np.random.normal(1.0900, 0.0010, 50)
+    return closes
 
 
 # =========================
-# SIGNAL FORMATTER
+# INDICATORS
 # =========================
-def format_signal(asset, direction, price, expiry_min):
+def ema(data, period=10):
+    weights = np.exp(np.linspace(-1., 0., period))
+    weights /= weights.sum()
+    return np.convolve(data, weights, mode='valid')[-1]
+
+
+def rsi(data, period=14):
+    diff = np.diff(data)
+    gain = np.maximum(diff, 0).mean()
+    loss = -np.minimum(diff, 0).mean()
+    rs = gain / (loss + 1e-6)
+    return 100 - (100 / (1 + rs))
+
+
+# =========================
+# AI SIGNAL ENGINE
+# =========================
+def analyze_market(data):
+
+    ema_fast = ema(data[-20:], 5)
+    ema_slow = ema(data[-20:], 10)
+    rsi_val = rsi(data[-20:])
+
+    macd = ema_fast - ema_slow
+
+    score = 0
+
+    # Trend logic
+    if ema_fast > ema_slow:
+        score += 1
+    else:
+        score -= 1
+
+    # RSI logic
+    if rsi_val < 30:
+        score += 1
+    elif rsi_val > 70:
+        score -= 1
+
+    # MACD logic
+    if macd > 0:
+        score += 1
+    else:
+        score -= 1
+
+    if score >= 2:
+        return "BUY", 0.85
+    elif score <= -2:
+        return "SELL", 0.85
+    else:
+        return None, 0.40
+
+
+# =========================
+# FORMAT SIGNAL
+# =========================
+def format_signal(asset, direction, price, expiry):
 
     now = datetime.now()
+
     entry_time = now + timedelta(minutes=1)
-    expiry_time = now + timedelta(minutes=expiry_min)
+    expiry_time = now + timedelta(minutes=expiry)
 
     arrow = "⬆️" if direction == "BUY" else "⬇️"
 
-    message = f"""
+    return f"""
 ━━━━━━━━━━━━━━━━━━
-🔥 AI BINARY SIGNAL 🔥
+🔥 AI SMART SIGNAL BOT 🔥
 ━━━━━━━━━━━━━━━━━━
 
 📈 Asset : {asset}
@@ -48,77 +110,81 @@ def format_signal(asset, direction, price, expiry_min):
 {expiry_time.strftime('%I:%M %p')}
 
 ⏳ Trade :
-{expiry_min} MIN
+{expiry} MIN
 
 📊 Direction :
 {direction} {arrow}
 
 💰 Entry Price :
-{price}
+{round(price, 5)}
 
-🔥 Accuracy :
+🔥 Confidence :
 HIGH
 
-⚡ Strategy :
-EMA + RSI + MACD + Trend Confirmation
+⚡ AI Engine :
+EMA + RSI + MACD Fusion
 
-━━━━━━━━━━━━━━━━━━
-📊 SIGNAL STATUS : ACTIVE
 ━━━━━━━━━━━━━━━━━━
 """
 
-    return message
+
+# =========================
+# TELEGRAM
+# =========================
+def send(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
 
 # =========================
-# DEMO SIGNAL GENERATOR
-# (Replace with your AI logic)
+# BOT LOOP
 # =========================
-def generate_signal():
-    # Example dummy signal (replace with your real bot logic)
-    return {
-        "asset": "USDJPY",
-        "direction": "BUY",
-        "price": 1.09083
-    }
+def run():
 
+    global last_signal_time
 
-# =========================
-# MAIN LOOP (24/7 BOT)
-# =========================
-def run_bot():
-
-    print("🚀 BOT STARTED")
+    print("🚀 AI SMART SIGNAL BOT STARTED")
 
     while True:
 
         try:
-            signal = generate_signal()
+            now = time.time()
 
-            for expiry in [1, 2, 5]:
+            # cooldown to avoid spam
+            if now - last_signal_time < COOLDOWN_SECONDS:
+                time.sleep(5)
+                continue
 
-                msg = format_signal(
-                    asset=signal["asset"],
-                    direction=signal["direction"],
-                    price=signal["price"],
-                    expiry_min=expiry
-                )
+            data = get_market_data()
 
-                print(msg)  # debug
-                send_telegram(msg)
+            direction, confidence = analyze_market(data)
 
-                time.sleep(2)
+            if direction is None:
+                print("NO TRADE - LOW CONFIDENCE")
+                time.sleep(5)
+                continue
 
-            # wait before next cycle
-            time.sleep(60)
+            price = data[-1]
+
+            # only HIGH quality signals
+            if confidence >= 0.80:
+
+                for expiry in [1, 2, 5]:
+
+                    msg = format_signal("USDJPY", direction, price, expiry)
+                    print(msg)
+                    send(msg)
+
+                    time.sleep(1)
+
+                last_signal_time = now
+
+            time.sleep(10)
 
         except Exception as e:
             print("ERROR:", e)
             time.sleep(5)
 
 
-# =========================
-# START
-# =========================
 if __name__ == "__main__":
-    run_bot()
+    run()

@@ -1,3 +1,8 @@
 flask
 requests
 pytz
+yfinance
+pandas
+numpy
+ta
+python-telegram-bot

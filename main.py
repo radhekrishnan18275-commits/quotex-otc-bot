@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import requests
 import pytz
 from datetime import datetime, timedelta
@@ -16,73 +16,83 @@ CHAT_ID = "8241640506"
 
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-wins = 0
-losses = 0
-total = 0
+stats = {
+    "wins": 0,
+    "losses": 0,
+    "total": 0,
+    "signals": []
+}
 
 # ================= TELEGRAM =================
-def send_telegram(message):
+def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": message})
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
 # ================= MARKET DATA =================
-def get_candles(symbol="EURUSD=X", interval="1m", period="1d"):
-    df = yf.download(symbol, interval=interval, period=period, progress=False)
-    return df
+def get_data(symbol="EURUSD=X", interval="1m"):
+    return yf.download(symbol, interval=interval, period="1d", progress=False)
 
-# ================= SIGNAL ENGINE =================
-def generate_signal(symbol):
+# ================= MULTI TIMEFRAME ENGINE =================
+def analyze(symbol):
 
-    df = get_candles(symbol)
+    df1 = yf.download(symbol, interval="1m", period="1d", progress=False)
+    df5 = yf.download(symbol, interval="5m", period="5d", progress=False)
 
-    if df is None or len(df) < 50:
+    if len(df1) < 50 or len(df5) < 50:
         return None
 
-    df["ema9"] = ta.trend.ema_indicator(df["Close"], window=9)
-    df["ema21"] = ta.trend.ema_indicator(df["Close"], window=21)
-    df["rsi"] = ta.momentum.rsi(df["Close"], window=14)
+    def score(df):
+        df["ema9"] = ta.trend.ema_indicator(df["Close"], 9)
+        df["ema21"] = ta.trend.ema_indicator(df["Close"], 21)
+        df["rsi"] = ta.momentum.rsi(df["Close"], 14)
 
-    macd = ta.trend.MACD(df["Close"])
-    df["macd"] = macd.macd()
-    df["signal"] = macd.macd_signal()
+        macd = ta.trend.MACD(df["Close"])
+        df["macd"] = macd.macd()
+        df["signal"] = macd.macd_signal()
 
-    last = df.iloc[-1]
+        last = df.iloc[-1]
 
-    score = 0
+        s = 0
+        if last["ema9"] > last["ema21"]:
+            s += 1
+        else:
+            s -= 1
 
-    if last["ema9"] > last["ema21"]:
-        score += 1
-    else:
-        score -= 1
+        if last["rsi"] > 55:
+            s += 1
+        elif last["rsi"] < 45:
+            s -= 1
 
-    if last["rsi"] > 55:
-        score += 1
-    elif last["rsi"] < 45:
-        score -= 1
+        if last["macd"] > last["signal"]:
+            s += 1
+        else:
+            s -= 1
 
-    if last["macd"] > last["signal"]:
-        score += 1
-    else:
-        score -= 1
+        return s
 
-    if score >= 2:
-        return "BUY", float(last["Close"])
-    elif score <= -2:
-        return "SELL", float(last["Close"])
+    s1 = score(df1)
+    s5 = score(df5)
+
+    final_score = s1 + s5
+
+    price = float(df1.iloc[-1]["Close"])
+
+    if final_score >= 3:
+        return "BUY", price, final_score
+    elif final_score <= -3:
+        return "SELL", price, final_score
     else:
         return None
 
 # ================= RESULT ENGINE =================
-def check_result(symbol, direction, entry_price, expiry_seconds=60):
+def check_result(symbol, direction, entry_price, expiry=60):
 
-    global wins, losses, total
+    time.sleep(expiry)
 
-    time.sleep(expiry_seconds)
-
-    df = get_candles(symbol)
+    df = yf.download(symbol, interval="1m", period="1d", progress=False)
     exit_price = float(df.iloc[-1]["Close"])
 
-    total += 1
+    stats["total"] += 1
 
     if direction == "BUY":
         result = "WIN" if exit_price > entry_price else "LOSS"
@@ -90,11 +100,11 @@ def check_result(symbol, direction, entry_price, expiry_seconds=60):
         result = "WIN" if exit_price < entry_price else "LOSS"
 
     if result == "WIN":
-        wins += 1
+        stats["wins"] += 1
     else:
-        losses += 1
+        stats["losses"] += 1
 
-    msg = f"""
+    send_telegram(f"""
 📊 RESULT UPDATE
 
 Asset: {symbol}
@@ -105,11 +115,10 @@ Exit: {exit_price}
 
 Result: {result}
 
-📈 Wins: {wins}
-📉 Losses: {losses}
-📊 Total: {total}
-"""
-    send_telegram(msg)
+📈 Wins: {stats["wins"]}
+📉 Losses: {stats["losses"]}
+📊 Total: {stats["total"]}
+""")
 
 # ================= WEBHOOK =================
 @app.route("/webhook", methods=["POST"])
@@ -118,41 +127,49 @@ def webhook():
     data = request.json
     symbol = data.get("symbol", "EURUSD=X")
 
-    signal = generate_signal(symbol)
+    signal = analyze(symbol)
 
     if not signal:
         return "NO SIGNAL", 200
 
-    direction, price = signal
+    direction, price, score = signal
 
     now = datetime.now(TIMEZONE)
 
-    entry_time = now + timedelta(minutes=1)
-    expiry_time = now + timedelta(minutes=2)
+    entry = now + timedelta(minutes=1)
+    expiry = now + timedelta(minutes=2)
 
-    message = f"""
-📊 AI BINARY SIGNAL
+    msg = f"""
+📊 AI OTC SIGNAL (PRO v3)
 
 📈 Asset : {symbol}
 
 🕒 Signal Time : {now.strftime("%I:%M:%S %p")}
 
-⏰ Entry Time : {entry_time.strftime("%I:%M %p")}
+⏰ Entry Time : {entry.strftime("%I:%M %p")}
 
-⌛ Expiry Time : {expiry_time.strftime("%I:%M %p")}
+⌛ Expiry Time : {expiry.strftime("%I:%M %p")}
 
-📊 Direction : {direction} {'⬆️' if direction=='BUY' else '⬇️'}
+📊 Direction : {direction}
 
 💰 Entry Price : {price}
 
-🔥 Accuracy : HIGH
+🔥 Signal Score : {score}/6
 
 ⚡ Strategy :
-EMA + RSI + MACD + Trend Filter
+EMA + RSI + MACD + Multi-Timeframe Trend
+
 ━━━━━━━━━━━━━━
 """
 
-    send_telegram(message)
+    send_telegram(msg)
+
+    stats["signals"].append({
+        "symbol": symbol,
+        "direction": direction,
+        "time": str(now),
+        "score": score
+    })
 
     threading.Thread(
         target=check_result,
@@ -161,9 +178,21 @@ EMA + RSI + MACD + Trend Filter
 
     return "OK", 200
 
+# ================= DASHBOARD =================
 @app.route("/")
-def home():
-    return "AI SIGNAL BOT RUNNING 24/7"
+def dashboard():
+
+    win_rate = 0
+    if stats["total"] > 0:
+        win_rate = (stats["wins"] / stats["total"]) * 100
+
+    return f"""
+    <h1>📊 HEDGE FUND PRO v3 DASHBOARD</h1>
+    <p>Wins: {stats['wins']}</p>
+    <p>Losses: {stats['losses']}</p>
+    <p>Total Trades: {stats['total']}</p>
+    <p>Win Rate: {win_rate:.2f}%</p>
+    """
 
 # ================= START =================
 if __name__ == "__main__":

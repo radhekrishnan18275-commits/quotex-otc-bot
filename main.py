@@ -1,86 +1,124 @@
-import requests
+import os
 import time
-import threading
-from flask import Flask
-from datetime import datetime
+from datetime import datetime, timedelta
+import requests
 
-app = Flask(__name__)
+# =========================
+# CONFIG (USE ENV VARS)
+# =========================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-BOT_TOKEN = "8954212814:AAHGIp4mxbKbFHn70uulbXGRNcy1ROJhCm0"
-CHAT_ID = "8241640506"
+# Telegram send function
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    requests.post(url, data=payload)
 
-SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY"]
 
-stats = {"run": 0}
+# =========================
+# SIGNAL FORMATTER
+# =========================
+def format_signal(asset, direction, price, expiry_min):
 
-def send(msg):
-    print("📩 SENDING:", msg)
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
-        )
-    except Exception as e:
-        print("Telegram error:", e)
+    now = datetime.now()
+    entry_time = now + timedelta(minutes=1)
+    expiry_time = now + timedelta(minutes=expiry_min)
 
-# 🔥 REAL PRICE TEST (no API dependency)
-def fake_price(symbol):
-    import random
-    return round(1.10 + random.uniform(-0.01, 0.01), 5)
+    arrow = "⬆️" if direction == "BUY" else "⬇️"
 
-# 🔥 FORCE SIGNAL EVERY LOOP (DEBUG MODE)
-def analyze(symbol):
-    price = fake_price(symbol)
-    print("📊 PRICE:", symbol, price)
+    message = f"""
+━━━━━━━━━━━━━━━━━━
+🔥 AI BINARY SIGNAL 🔥
+━━━━━━━━━━━━━━━━━━
 
-    stats["run"] += 1
+📈 Asset : {asset}
 
-    if stats["run"] % 2 == 0:
-        return "BUY", price
-    else:
-        return "SELL", price
+🕒 Signal Time :
+{now.strftime('%I:%M:%S %p')}
 
-def loop():
-    print("🔁 SIGNAL LOOP STARTED")
+⏰ Entry Time :
+{entry_time.strftime('%I:%M %p')}
+
+⌛ Expiry Time :
+{expiry_time.strftime('%I:%M %p')}
+
+⏳ Trade :
+{expiry_min} MIN
+
+📊 Direction :
+{direction} {arrow}
+
+💰 Entry Price :
+{price}
+
+🔥 Accuracy :
+HIGH
+
+⚡ Strategy :
+EMA + RSI + MACD + Trend Confirmation
+
+━━━━━━━━━━━━━━━━━━
+📊 SIGNAL STATUS : ACTIVE
+━━━━━━━━━━━━━━━━━━
+"""
+
+    return message
+
+
+# =========================
+# DEMO SIGNAL GENERATOR
+# (Replace with your AI logic)
+# =========================
+def generate_signal():
+    # Example dummy signal (replace with your real bot logic)
+    return {
+        "asset": "USDJPY",
+        "direction": "BUY",
+        "price": 1.09083
+    }
+
+
+# =========================
+# MAIN LOOP (24/7 BOT)
+# =========================
+def run_bot():
+
+    print("🚀 BOT STARTED")
 
     while True:
 
-        for symbol in SYMBOLS:
+        try:
+            signal = generate_signal()
 
-            print("🔍 CHECK:", symbol)
+            for expiry in [1, 2, 5]:
 
-            signal = analyze(symbol)
+                msg = format_signal(
+                    asset=signal["asset"],
+                    direction=signal["direction"],
+                    price=signal["price"],
+                    expiry_min=expiry
+                )
 
-            print("📡 SIGNAL:", signal)
+                print(msg)  # debug
+                send_telegram(msg)
 
-            if signal:
-                direction, price = signal
+                time.sleep(2)
 
-                send(f"""
-🔥 AI SIGNAL (DEBUG MODE)
+            # wait before next cycle
+            time.sleep(60)
 
-Asset: {symbol}
-Direction: {direction}
-Price: {price}
-Time: {datetime.now()}
-""")
-
+        except Exception as e:
+            print("ERROR:", e)
             time.sleep(5)
 
-        time.sleep(10)
 
-@app.route("/")
-def home():
-    return "BOT RUNNING"
-
+# =========================
+# START
+# =========================
 if __name__ == "__main__":
-
-    send("🚀 BOT STARTED SUCCESSFULLY")
-
-    t = threading.Thread(target=loop, daemon=True)
-    t.start()
-
-    print("MAIN THREAD ACTIVE")
-
-    app.run(host="0.0.0.0", port=10000)
+    run_bot()

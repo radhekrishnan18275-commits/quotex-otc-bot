@@ -1,8 +1,10 @@
+flask
 python-telegram-bot
+requests
 yfinance
 pandas
-ta
 numpy
-requests
+ta
 pytz
-flask
+curl_cffi
+lxml

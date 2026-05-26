@@ -1,49 +1,61 @@
-from flask import Flask
-import threading
+import os
 import time
-import requests
-from datetime import datetime, timedelta
-import pytz
 import random
+import threading
+import requests
+import traceback
+from datetime import datetime, timedelta
+from flask import Flask
+import pytz
+
+# ==============================
+# TELEGRAM SETTINGS
+# ==============================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+# ==============================
+# FLASK APP
+# ==============================
 
 app = Flask(__name__)
 
-# ==================================
-# TELEGRAM SETTINGS
-# ==================================
+@app.route("/")
+def home():
+    return "AI SIGNAL BOT RUNNING"
 
-BOT_TOKEN = "8954212814:AAHGIp4mxbKbFHn70uulbXGRNcy1ROJhCm0"
-CHAT_ID = "8241640506"
-
-# ==================================
+# ==============================
 # INDIA TIMEZONE
-# ==================================
+# ==============================
 
-IST = pytz.timezone("Asia/Kolkata")
+india = pytz.timezone("Asia/Kolkata")
 
-# ==================================
+# ==============================
 # PAIRS
-# ==================================
+# ==============================
 
-pairs = [
-    "EURUSD",
-    "GBPUSD",
-    "AUDUSD",
-    "USDJPY",
-    "USDCAD"
+PAIRS = [
+    "EURUSD=X",
+    "GBPUSD=X",
+    "AUDUSD=X",
+    "USDJPY=X",
+    "USDCAD=X",
+    "USDCHF=X",
+    "EURJPY=X"
 ]
 
-# ==================================
-# SUMMARY
-# ==================================
+# ==============================
+# DAILY SUMMARY
+# ==============================
 
 total_signals = 0
-wins = 0
-losses = 0
+total_wins = 0
+total_losses = 0
 
-# ==================================
-# SEND TELEGRAM MESSAGE
-# ==================================
+# ==============================
+# TELEGRAM SEND FUNCTION
+# ==============================
 
 def send_telegram(message):
 
@@ -55,103 +67,232 @@ def send_telegram(message):
     }
 
     try:
-
         response = requests.post(url, data=data)
-
-        print("TELEGRAM STATUS:", response.status_code)
         print("TELEGRAM RESPONSE:", response.text)
 
     except Exception as e:
-
         print("TELEGRAM ERROR:", e)
 
-# ==================================
-# RANDOM LIVE PRICE
-# ==================================
+# ==============================
+# GET LIVE PRICE
+# ==============================
 
-def get_price():
+def get_price(symbol):
 
-    return round(random.uniform(1.1000, 1.5000), 4)
+    try:
 
-# ==================================
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        response = requests.get(url, headers=headers)
+
+        data = response.json()
+
+        price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
+
+        return round(price, 5)
+
+    except Exception as e:
+
+        print("PRICE ERROR:", e)
+
+        return None
+
+# ==============================
+# GENERATE SIGNAL
+# ==============================
+
+def generate_signal():
+
+    pair = random.choice(PAIRS)
+
+    price = get_price(pair)
+
+    if price is None:
+        return None
+
+    direction = random.choice(["UP ⬆️", "DOWN ⬇️"])
+
+    trade_time = random.choice([1, 2, 5])
+
+    now = datetime.now(india)
+
+    entry_time = now + timedelta(minutes=1)
+
+    expiry_time = entry_time + timedelta(minutes=trade_time)
+
+    signal = {
+        "pair": pair.replace("=X", ""),
+        "price": price,
+        "direction": direction,
+        "signal_time": now.strftime("%I:%M:%S %p"),
+        "entry_time": entry_time.strftime("%I:%M %p"),
+        "expiry_time": expiry_time.strftime("%I:%M %p"),
+        "trade_time": trade_time
+    }
+
+    return signal
+
+# ==============================
+# RESULT CHECK
+# ==============================
+
+def check_result(signal):
+
+    global total_wins
+    global total_losses
+
+    try:
+
+        print("WAITING FOR RESULT...")
+
+        wait_seconds = (signal["trade_time"] * 60) + 5
+
+        time.sleep(wait_seconds)
+
+        new_price = get_price(signal["pair"] + "=X")
+
+        if new_price is None:
+            return
+
+        entry_price = signal["price"]
+
+        direction = signal["direction"]
+
+        result = "LOSS ❌"
+
+        if direction == "UP ⬆️":
+
+            if new_price > entry_price:
+                result = "WIN ✅"
+
+        else:
+
+            if new_price < entry_price:
+                result = "WIN ✅"
+
+        if "WIN" in result:
+            total_wins += 1
+        else:
+            total_losses += 1
+
+        result_message = f"""
+🏁 RESULT UPDATE
+
+📈 Asset : {signal['pair']}
+
+🕒 Entry Time :
+{signal['entry_time']}
+
+⌛ Expiry Time :
+{signal['expiry_time']}
+
+📊 Direction :
+{signal['direction']}
+
+💰 Entry Price :
+{entry_price}
+
+💰 Exit Price :
+{new_price}
+
+🎯 Final Result :
+{result}
+
+━━━━━━━━━━━━━━
+"""
+
+        send_telegram(result_message)
+
+    except Exception:
+        print(traceback.format_exc())
+
+# ==============================
+# DAILY SUMMARY
+# ==============================
+
+def send_summary():
+
+    while True:
+
+        try:
+
+            now = datetime.now(india)
+
+            if now.hour == 23 and now.minute == 59:
+
+                summary = f"""
+📊 DAILY SUMMARY REPORT
+
+✅ Total Signals :
+{total_signals}
+
+🏆 Total Wins :
+{total_wins}
+
+❌ Total Losses :
+{total_losses}
+
+📈 Accuracy :
+{round((total_wins / max(total_signals,1)) * 100, 2)}%
+
+━━━━━━━━━━━━━━
+"""
+
+                send_telegram(summary)
+
+                time.sleep(60)
+
+            time.sleep(20)
+
+        except Exception:
+            print(traceback.format_exc())
+
+# ==============================
 # SIGNAL ENGINE
-# ==================================
+# ==============================
 
 def signal_engine():
 
     global total_signals
-    global wins
-    global losses
-
-    print("SIGNAL ENGINE STARTED")
 
     while True:
 
-        pair = random.choice(pairs)
+        try:
 
-        direction = random.choice([
-            "UP ⬆️",
-            "DOWN ⬇️"
-        ])
+            print("CHECKING MARKET...")
 
-        trade_type = random.choice([
-            "1 MIN",
-            "2 MIN",
-            "5 MIN"
-        ])
+            signal = generate_signal()
 
-        expiry_minutes = 1
+            if signal:
 
-        if trade_type == "2 MIN":
-            expiry_minutes = 2
+                total_signals += 1
 
-        if trade_type == "5 MIN":
-            expiry_minutes = 5
+                message = f"""
+🚀 AI BINARY SIGNAL 🚀
 
-        now = datetime.now(IST)
-
-        signal_time = now.strftime("%I:%M:%S %p")
-
-        entry_obj = now + timedelta(minutes=1)
-
-        expiry_obj = entry_obj + timedelta(
-            minutes=expiry_minutes
-        )
-
-        entry_time = entry_obj.strftime("%I:%M %p")
-
-        expiry_time = expiry_obj.strftime("%I:%M %p")
-
-        entry_price = get_price()
-
-        # ==================================
-        # SIGNAL MESSAGE
-        # ==================================
-
-        signal_message = f"""
-━━━━━━━━━━━━━━━━━━
-🔥 AI BINARY SIGNAL 🔥
-━━━━━━━━━━━━━━━━━━
-
-📈 Asset : {pair}
+📈 Asset : {signal['pair']}
 
 🕒 Signal Time :
-{signal_time}
+{signal['signal_time']}
 
 ⏰ Entry Time :
-{entry_time}
+{signal['entry_time']}
 
 ⌛ Expiry Time :
-{expiry_time}
+{signal['expiry_time']}
 
-⏳ Trade :
-{trade_type}
+🕐 Trade Time :
+{signal['trade_time']} MINUTE
 
 📊 Direction :
-{direction}
+{signal['direction']}
 
 💰 Entry Price :
-{entry_price}
+{signal['price']}
 
 🔥 Accuracy :
 HIGH
@@ -159,113 +300,48 @@ HIGH
 ⚡ Strategy :
 EMA + RSI + MACD + Trend Confirmation
 
-━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━
 """
 
-        send_telegram(signal_message)
+                send_telegram(message)
 
-        print("SIGNAL SENT")
+                result_thread = threading.Thread(
+                    target=check_result,
+                    args=(signal,)
+                )
 
-        total_signals += 1
+                result_thread.start()
 
-        # ==================================
-        # WAIT FOR RESULT
-        # ==================================
-
-        wait_time = (1 + expiry_minutes) * 60
-
-        time.sleep(wait_time)
-
-        exit_price = get_price()
-
-        result = "LOSS ❌"
-
-        if direction == "UP ⬆️":
-
-            if exit_price > entry_price:
-                result = "WIN ✅"
-                wins += 1
             else:
-                losses += 1
 
-        else:
+                print("NO SIGNAL FOUND")
 
-            if exit_price < entry_price:
-                result = "WIN ✅"
-                wins += 1
-            else:
-                losses += 1
+            time.sleep(120)
 
-        # ==================================
-        # RESULT MESSAGE
-        # ==================================
+        except Exception:
 
-        result_message = f"""
-━━━━━━━━━━━━━━━━━━
-📢 SIGNAL RESULT
-━━━━━━━━━━━━━━━━━━
+            print(traceback.format_exc())
 
-📈 Asset : {pair}
+            time.sleep(30)
 
-⏳ Trade :
-{trade_type}
+# ==============================
+# START ENGINE
+# ==============================
 
-📊 Direction :
-{direction}
-
-💰 Entry Price :
-{entry_price}
-
-💵 Exit Price :
-{exit_price}
-
-🏆 Result :
-{result}
-
-━━━━━━━━━━━━━━━━━━
-📊 SUMMARY
-━━━━━━━━━━━━━━━━━━
-
-✅ Total :
-{total_signals}
-
-🏆 Wins :
-{wins}
-
-❌ Loss :
-{losses}
-
-━━━━━━━━━━━━━━━━━━
-"""
-
-        send_telegram(result_message)
-
-        print("RESULT SENT")
-
-        time.sleep(20)
-
-# ==================================
-# HOME PAGE
-# ==================================
-
-@app.route("/")
-def home():
-
-    return "BOT RUNNING"
-
-# ==================================
-# START BOT
-# ==================================
+print("BOT TOKEN:", BOT_TOKEN)
+print("CHAT ID:", CHAT_ID)
+print("SIGNAL ENGINE STARTED")
 
 threading.Thread(target=signal_engine).start()
 
-# ==================================
-# RUN APP
-# ==================================
+threading.Thread(target=send_summary).start()
+
+# ==============================
+# RUN FLASK
+# ==============================
 
 if __name__ == "__main__":
 
-    app.run(
-        host="0.0.0.0",
-        port=10000
-    )
+    port = int(os.environ.get("PORT", 10000))
+
+    app.run(host="0.0.0.0", port=port)

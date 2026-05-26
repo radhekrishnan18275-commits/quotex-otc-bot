@@ -1,6 +1,6 @@
 flask
 requests
+pytz
 pandas
 yfinance
 ta
-pytz

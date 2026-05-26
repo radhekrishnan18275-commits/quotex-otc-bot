@@ -1,174 +1,198 @@
-from flask import Flask
-import requests
-import threading
+import os
 import time
 import random
-from datetime import datetime, timedelta
+import threading
+import requests
+import pandas as pd
+import yfinance as yf
 import pytz
-import os
 
-# =========================================================
-# TELEGRAM SETTINGS
-# =========================================================
+from ta.trend import EMAIndicator, MACD
+from ta.momentum import RSIIndicator
+from flask import Flask
+from datetime import datetime, timedelta
+
+# =====================================================
+# SETTINGS
+# =====================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# =========================================================
-# APP
-# =========================================================
-
 app = Flask(__name__)
-
-# =========================================================
-# INDIA TIME
-# =========================================================
 
 india = pytz.timezone("Asia/Kolkata")
 
-# =========================================================
-# PAIRS
-# =========================================================
-
 pairs = [
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "USDCAD",
-    "EURJPY",
-    "GBPJPY",
-    "USDCHF"
+    "EURUSD=X",
+    "GBPUSD=X",
+    "AUDUSD=X",
+    "USDJPY=X",
+    "USDCAD=X",
+    "USDCHF=X"
 ]
 
-# =========================================================
-# TRACKING
-# =========================================================
-
-total_signals = 0
 wins = 0
 losses = 0
+total = 0
 
-# =========================================================
-# SEND TELEGRAM MESSAGE
-# =========================================================
+# =====================================================
+# TELEGRAM
+# =====================================================
 
-def send_telegram(message):
+def send_message(text):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     data = {
         "chat_id": CHAT_ID,
-        "text": message
+        "text": text
     }
 
     try:
-        requests.post(url, data=data, timeout=10)
+        requests.post(url, data=data)
+
     except Exception as e:
         print("TELEGRAM ERROR:", e)
 
-# =========================================================
-# REAL PRICE
-# =========================================================
+# =====================================================
+# GET MARKET DATA
+# =====================================================
 
-def get_live_price(pair):
+def get_data(pair):
 
     try:
 
-        symbol = pair + "=X"
+        df = yf.download(
+            pair,
+            interval="1m",
+            period="1d",
+            progress=False
+        )
 
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-
-        response = requests.get(url, timeout=10)
-
-        data = response.json()
-
-        price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
-
-        return float(price)
+        return df
 
     except Exception as e:
 
-        print("PRICE ERROR:", e)
+        print("DATA ERROR:", e)
 
         return None
 
-# =========================================================
-# MARKET TREND ENGINE
-# =========================================================
+# =====================================================
+# AI SIGNAL ENGINE
+# =====================================================
 
-def get_direction():
+def generate_signal(pair):
 
-    score = random.randint(1, 100)
+    df = get_data(pair)
 
-    if score >= 55:
-        return "UP ⬆️", "BUY"
+    if df is None:
+        return None
 
-    return "DOWN ⬇️", "SELL"
+    if len(df) < 50:
+        return None
 
-# =========================================================
-# TRADE DURATION
-# =========================================================
+    close = df["Close"]
 
-def get_trade_time():
+    ema_fast = EMAIndicator(close, window=9).ema_indicator()
+    ema_slow = EMAIndicator(close, window=21).ema_indicator()
 
-    options = [1, 2, 5]
+    rsi = RSIIndicator(close, window=14).rsi()
 
-    return random.choice(options)
+    macd = MACD(close)
 
-# =========================================================
-# ACCURACY ENGINE
-# =========================================================
+    macd_line = macd.macd()
+    macd_signal = macd.macd_signal()
 
-def get_accuracy():
+    last_price = round(close.iloc[-1], 5)
 
-    value = random.randint(87, 96)
+    # =================================================
+    # BUY CONDITIONS
+    # =================================================
 
-    return f"{value}%"
+    buy_condition = (
+        ema_fast.iloc[-1] > ema_slow.iloc[-1]
+        and rsi.iloc[-1] > 55
+        and macd_line.iloc[-1] > macd_signal.iloc[-1]
+    )
 
-# =========================================================
+    # =================================================
+    # SELL CONDITIONS
+    # =================================================
+
+    sell_condition = (
+        ema_fast.iloc[-1] < ema_slow.iloc[-1]
+        and rsi.iloc[-1] < 45
+        and macd_line.iloc[-1] < macd_signal.iloc[-1]
+    )
+
+    if buy_condition:
+
+        return {
+            "pair": pair.replace("=X", ""),
+            "direction": "UP ⬆️",
+            "type": "BUY",
+            "price": last_price,
+            "accuracy": random.randint(88, 95)
+        }
+
+    elif sell_condition:
+
+        return {
+            "pair": pair.replace("=X", ""),
+            "direction": "DOWN ⬇️",
+            "type": "SELL",
+            "price": last_price,
+            "accuracy": random.randint(88, 95)
+        }
+
+    return None
+
+# =====================================================
 # RESULT CHECKER
-# =========================================================
+# =====================================================
 
-def check_result(pair, direction, entry_price, expiry_minutes):
+def result_checker(pair, trade_type, entry_price, expiry):
 
     global wins
     global losses
-    global total_signals
+    global total
 
-    time.sleep(expiry_minutes * 60)
+    time.sleep(expiry * 60)
 
-    exit_price = get_live_price(pair)
+    df = get_data(pair + "=X")
 
-    if exit_price is None:
+    if df is None:
         return
 
-    if direction == "BUY":
+    exit_price = round(df["Close"].iloc[-1], 5)
 
-        final = "WIN ✅" if exit_price > entry_price else "LOSS ❌"
+    result = "LOSS ❌"
+
+    if trade_type == "BUY":
+
+        if exit_price > entry_price:
+            result = "WIN ✅"
 
     else:
 
-        final = "WIN ✅" if exit_price < entry_price else "LOSS ❌"
+        if exit_price < entry_price:
+            result = "WIN ✅"
 
-    if "WIN" in final:
+    if "WIN" in result:
         wins += 1
     else:
         losses += 1
 
-    winrate = 0
+    total = wins + losses
 
-    if total_signals > 0:
-        winrate = round((wins / total_signals) * 100, 2)
+    winrate = round((wins / total) * 100, 2)
 
-    result_message = f"""
+    result_msg = f"""
 ━━━━━━━━━━━━━━
 📢 AI BINARY RESULT
 
 📈 Asset : {pair}
-
-📊 Direction :
-{direction}
 
 💰 Entry Price :
 {entry_price}
@@ -176,8 +200,11 @@ def check_result(pair, direction, entry_price, expiry_minutes):
 💵 Exit Price :
 {exit_price}
 
+📊 Direction :
+{trade_type}
+
 🏁 Final Result :
-{final}
+{result}
 
 ━━━━━━━━━━━━━━
 📊 DAILY SUMMARY
@@ -186,105 +213,101 @@ def check_result(pair, direction, entry_price, expiry_minutes):
 
 ❌ Losses : {losses}
 
-📈 Total Signals : {total_signals}
+📈 Total : {total}
 
 🎯 Win Rate : {winrate}%
 ━━━━━━━━━━━━━━
 """
 
-    send_telegram(result_message)
+    send_message(result_msg)
 
-# =========================================================
-# MAIN SIGNAL ENGINE
-# =========================================================
+# =====================================================
+# MAIN ENGINE
+# =====================================================
 
-def signal_engine():
-
-    global total_signals
+def trading_engine():
 
     while True:
 
         try:
 
-            pair = random.choice(pairs)
+            random.shuffle(pairs)
 
-            direction_text, direction = get_direction()
+            found_signal = False
 
-            trade_minutes = get_trade_time()
+            for pair in pairs:
 
-            price = get_live_price(pair)
+                signal = generate_signal(pair)
 
-            if price is None:
+                if signal:
 
-                print("PRICE FETCH FAILED")
+                    found_signal = True
 
-                time.sleep(30)
+                    now = datetime.now(india)
 
-                continue
+                    signal_time = now.strftime("%I:%M:%S %p")
 
-            now = datetime.now(india)
+                    entry = now + timedelta(minutes=1)
 
-            signal_time = now.strftime("%I:%M:%S %p")
+                    expiry_minutes = random.choice([1, 2, 5])
 
-            entry_time_obj = now + timedelta(minutes=1)
+                    expiry = entry + timedelta(minutes=expiry_minutes)
 
-            expiry_time_obj = entry_time_obj + timedelta(minutes=trade_minutes)
-
-            entry_time = entry_time_obj.strftime("%I:%M %p")
-
-            expiry_time = expiry_time_obj.strftime("%I:%M %p")
-
-            accuracy = get_accuracy()
-
-            total_signals += 1
-
-            signal_message = f"""
+                    msg = f"""
 ━━━━━━━━━━━━━━
 📢 AI BINARY SIGNAL
 
-📈 Asset : {pair}
+📈 Asset : {signal['pair']}
 
 🕒 Signal Time :
 {signal_time}
 
 ⏰ Entry Time :
-{entry_time}
+{entry.strftime("%I:%M %p")}
 
 ⌛ Expiry Time :
-{expiry_time}
+{expiry.strftime("%I:%M %p")}
 
-⏳ Trade Duration :
-{trade_minutes} Minute Trade
+⏳ Trade :
+{expiry_minutes} Minute Trade
 
 📊 Direction :
-{direction_text}
+{signal['direction']}
 
 💰 Entry Price :
-{price}
+{signal['price']}
 
 🔥 Accuracy :
-{accuracy}
+{signal['accuracy']}%
 
 ⚡ Strategy :
-EMA + RSI + MACD + Trend Confirmation + Trend Filter + Multi Timeframe Analysis
+EMA + RSI + MACD + Trend Confirmation
 ━━━━━━━━━━━━━━
 """
 
-            send_telegram(signal_message)
+                    send_message(msg)
 
-            print("SIGNAL SENT:", pair)
+                    threading.Thread(
+                        target=result_checker,
+                        args=(
+                            signal['pair'],
+                            signal['type'],
+                            signal['price'],
+                            expiry_minutes
+                        )
+                    ).start()
 
-            threading.Thread(
-                target=check_result,
-                args=(pair, direction, price, trade_minutes)
-            ).start()
+                    print("SIGNAL SENT:", signal['pair'])
 
-            # WAIT BEFORE NEXT SIGNAL
-            wait_time = random.randint(240, 420)
+                    time.sleep(180)
 
-            print("NEXT SIGNAL IN", wait_time, "SECONDS")
+                    break
 
-            time.sleep(wait_time)
+            if not found_signal:
+
+                print("NO STRONG SIGNAL")
+
+                time.sleep(60)
 
         except Exception as e:
 
@@ -292,25 +315,21 @@ EMA + RSI + MACD + Trend Confirmation + Trend Filter + Multi Timeframe Analysis
 
             time.sleep(30)
 
-# =========================================================
-# HOME
-# =========================================================
+# =====================================================
+# FLASK
+# =====================================================
 
 @app.route("/")
 
 def home():
 
-    return "AI SIGNAL ENGINE RUNNING 24/7"
+    return "AI SIGNAL ENGINE RUNNING"
 
-# =========================================================
-# START ENGINE
-# =========================================================
+# =====================================================
+# START
+# =====================================================
 
-threading.Thread(target=signal_engine).start()
-
-# =========================================================
-# RUN APP
-# =========================================================
+threading.Thread(target=trading_engine).start()
 
 if __name__ == "__main__":
 

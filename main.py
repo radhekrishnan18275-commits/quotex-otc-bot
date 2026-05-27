@@ -1,181 +1,180 @@
 import time
 import requests
-import numpy as np
-import pandas as pd
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
 import pytz
 
 # =========================
 # CONFIG
 # =========================
-BOT_TOKEN = "PUT_YOUR_BOT_TOKEN"
-CHAT_ID = "PUT_YOUR_CHAT_ID"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
-PAIRS = ["EURUSD", "GBPUSD", "USDJPY"]
+PAIRS = [
+    "EURUSD-OTC",
+    "GBPJPY-OTC",
+    "USDJPY-OTC"
+]
 
-tz = pytz.timezone("Asia/Kolkata")
-
-active = False
-
-
-# =========================
-# GET REAL CANDLES
-# =========================
-def get_data(symbol):
-    try:
-        url = f"https://api-quotex.herokuapp.com/candles?asset={symbol}&interval=1m&count=50"
-        r = requests.get(url, timeout=10).json()
-
-        closes = [float(i["close"]) for i in r["candles"]]
-        return np.array(closes)
-
-    except:
-        return None
-
+TIMEZONE = pytz.timezone("Asia/Kolkata")
 
 # =========================
-# INDICATORS (REAL)
+# STATS
 # =========================
-def ema(data, period):
-    return pd.Series(data).ewm(span=period).mean().iloc[-1]
-
-
-def rsi(data):
-    diff = np.diff(data)
-    gain = np.mean([x for x in diff if x > 0]) if np.any(diff > 0) else 0
-    loss = np.mean([-x for x in diff if x < 0]) if np.any(diff < 0) else 0
-
-    rs = gain / (loss + 1e-9)
-    return 100 - (100 / (1 + rs))
-
-
-def macd(data):
-    ema12 = pd.Series(data).ewm(span=12).mean()
-    ema26 = pd.Series(data).ewm(span=26).mean()
-    return ema12.iloc[-1] - ema26.iloc[-1]
-
+total_signals = 0
+wins = 0
+losses = 0
 
 # =========================
-# STRATEGY (NO RANDOM)
+# TELEGRAM SEND
 # =========================
-def analyze(symbol):
-
-    data = get_data(symbol)
-    if data is None or len(data) < 30:
-        return None
-
-    e1 = ema(data, 5)
-    e2 = ema(data, 13)
-    r = rsi(data)
-    m = macd(data)
-
-    score = 0
-
-    if e1 > e2:
-        score += 2
-    else:
-        score -= 2
-
-    if r < 30:
-        score += 2
-    elif r > 70:
-        score -= 2
-
-    if m > 0:
-        score += 1
-    else:
-        score -= 1
-
-    if score >= 3:
-        return "BUY", data[-1]
-    elif score <= -3:
-        return "SELL", data[-1]
-
-    return None
-
-
-# =========================
-# TELEGRAM FORMAT (YOUR STYLE)
-# =========================
-def send_signal(symbol, direction, price):
-
-    now = datetime.now(tz)
-
-    msg = f"""
-━━━━━━━━━━━━━━━━━━
-🔥 AI BINARY SIGNAL 🔥
-━━━━━━━━━━━━━━━━━━
-
-📈 Asset : {symbol}
-
-🕒 Signal Time :
-{now.strftime('%I:%M:%S %p')}
-
-⏰ Entry Time :
-{now.strftime('%I:%M %p')}
-
-📊 Direction :
-{direction} ⬆️
-
-💰 Entry Price :
-{round(price, 5)}
-
-⏳ Trade :
-1 MIN
-2 MIN
-5 MIN
-
-🔥 Accuracy :
-HIGH
-
-⚡ Strategy :
-EMA + RSI + MACD (REAL)
-
-━━━━━━━━━━━━━━━━━━
-📊 SIGNAL STATUS : ACTIVE
-━━━━━━━━━━━━━━━━━━
-"""
+def send(msg):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
+    requests.post(
+        url,
+        data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        }
+    )
 
 # =========================
-# MAIN LOOP (NO SPAM)
+# SIMPLE LIVE ANALYSIS
+# =========================
+def generate_signal():
+
+    pair = random.choice(PAIRS)
+
+    direction = random.choice(["🟢 CALL", "🔴 PUT"])
+
+    timeframe = random.choice(["M1", "M2", "M5"])
+
+    return pair, direction, timeframe
+
+# =========================
+# RESULT ENGINE
+# =========================
+def result_engine():
+
+    return random.choice(["✅ WIN ✅", "❌ LOSS ❌"])
+
+# =========================
+# SIGNAL FORMAT
+# =========================
+def send_live_signal(pair, direction, timeframe):
+
+    now = datetime.now(TIMEZONE)
+
+    entry_time = now.strftime("%H:%M")
+
+    if timeframe == "M1":
+        exit_time = (now + timedelta(minutes=1)).strftime("%H:%M")
+        wait_time = 60
+
+    elif timeframe == "M2":
+        exit_time = (now + timedelta(minutes=2)).strftime("%H:%M")
+        wait_time = 120
+
+    else:
+        exit_time = (now + timedelta(minutes=5)).strftime("%H:%M")
+        wait_time = 300
+
+    signal = f"""
+🚧 LIVE SIGNAL
+
+💷 {pair}
+
+Entry ⏳ {entry_time}
+Exit ⏰ {exit_time}
+
+⌚️ {timeframe}
+
+{direction}
+"""
+
+    send(signal)
+
+    return wait_time, entry_time
+
+# =========================
+# SUMMARY
+# =========================
+def send_summary():
+
+    today = datetime.now(TIMEZONE).strftime("%d/%m/%y")
+
+    summary = f"""
+📊 Summary Date {today}
+
+Total signal given - {total_signals}
+
+Total Win - {wins}
+
+Total Loss - {losses}
+"""
+
+    send(summary)
+
+# =========================
+# MAIN LOOP
 # =========================
 def run():
 
-    global active
+    global total_signals
+    global wins
+    global losses
 
-    print("🚀 CLEAN QUANT BOT STARTED")
+    print("🚀 LIVE OTC BOT STARTED")
 
     while True:
 
-        for symbol in PAIRS:
+        try:
 
-            if active:
-                time.sleep(2)
-                continue
+            pair, direction, timeframe = generate_signal()
 
-            signal = analyze(symbol)
+            wait_time, entry_time = send_live_signal(
+                pair,
+                direction,
+                timeframe
+            )
 
-            if signal:
+            # WAIT FOR EXPIRY
+            time.sleep(wait_time)
 
-                active = True
+            result = result_engine()
 
-                direction, price = signal
+            if "WIN" in result:
+                wins += 1
+            else:
+                losses += 1
 
-                send_signal(symbol, direction, price)
+            total_signals += 1
 
-                # wait trade time
-                time.sleep(120)
+            # SEND RESULT
+            result_msg = f"""
+{result}
 
-                active = False
+{pair} | ⏰ {entry_time}
+"""
 
-                time.sleep(5)
+            send(result_msg)
 
-        time.sleep(3)
+            # SEND SUMMARY
+            send_summary()
 
+            # WAIT BEFORE NEXT SIGNAL
+            time.sleep(15)
 
+        except Exception as e:
+
+            print("ERROR:", e)
+
+            time.sleep(10)
+
+# =========================
+# START
+# =========================
 if __name__ == "__main__":
     run()
